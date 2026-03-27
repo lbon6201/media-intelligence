@@ -49,6 +49,7 @@ router.post('/:workstream_id', async (req, res) => {
       cl_firm_sentiments = ?,
       cl_institutional_investors = ?,
       cl_institutional_investor_quotes = ?,
+      cl_internal_quotes = ?,
       cl_external_quotes = ?,
       cl_key_takeaway = ?,
       cl_rationale = ?,
@@ -67,6 +68,7 @@ router.post('/:workstream_id', async (req, res) => {
           JSON.stringify(result.firm_sentiments || {}),
           result.institutional_investors || '',
           JSON.stringify(result.institutional_investor_quotes || []),
+          JSON.stringify(result.internal_quotes || []),
           JSON.stringify(result.external_quotes || []),
           result.key_takeaway || '',
           result.rationale || '',
@@ -78,6 +80,12 @@ router.post('/:workstream_id', async (req, res) => {
           if (q.quote && q.source) {
             await db.run(`INSERT INTO quotes (id, article_id, workstream_id, text, type, speaker, speaker_org, speaker_type, sentiment, stance, role, context) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               uuid(), article.id, article.workstream_id, q.quote, 'institutional_investor', q.source, null, 'institutional_investor', null, q.stance || 'neutral', null, null);
+          }
+        }
+        for (const q of (result.internal_quotes || [])) {
+          if (q.quote && q.source) {
+            await db.run(`INSERT INTO quotes (id, article_id, workstream_id, text, type, speaker, speaker_org, speaker_type, sentiment, stance, role, context) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              uuid(), article.id, article.workstream_id, q.quote, 'internal', q.source, null, q.role || 'fund_executive', null, q.stance || 'neutral', q.role || 'fund_executive', null);
           }
         }
         for (const q of (result.external_quotes || [])) {
