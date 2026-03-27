@@ -12,7 +12,7 @@ async function assembleContext(wsId) {
   const taxonomy = JSON.parse(ws.taxonomy);
 
   // Summary stats
-  const stats = await db.get(`SELECT COUNT(*) as total, AVG(cl_sentiment_score) as avg_sent FROM articles WHERE workstream_id = ? AND cl_status IN ('classified','approved')`, wsId);
+  const stats = await db.get(`SELECT COUNT(*) as total, AVG(cl_sentiment_score) as avg_sent FROM articles WHERE workstream_id = ? AND cl_status IN ('classified','approved')`, wsId) || { total: 0, avg_sent: null };
 
   // Recent articles (metadata only, no full_text)
   const recent = await db.all(`SELECT id, headline, outlet, author, publish_date, cl_sentiment_score, cl_sentiment_label, cl_topics, cl_key_entities, cl_firms_mentioned, cl_key_takeaway, cl_rationale FROM articles WHERE workstream_id = ? AND cl_status IN ('classified','approved') ORDER BY publish_date DESC LIMIT 30`, wsId);
@@ -38,16 +38,18 @@ async function assembleContext(wsId) {
   const gapData = computeGaps(wsId, taxonomy.topics, articles);
 
   // Last narrative
-  const narrative = await db.get('SELECT result FROM narratives WHERE workstream_id = ? ORDER BY generated_at DESC LIMIT 1', wsId);
+  let narrative = null;
+  try { narrative = await db.get('SELECT result FROM narratives WHERE workstream_id = ? ORDER BY generated_at DESC LIMIT 1', wsId); } catch {}
 
   // Watchlist
-  const watchlist = await db.all('SELECT name, affiliation, role FROM watchlist_speakers WHERE workstream_id = ?', wsId);
+  let watchlist = [];
+  try { watchlist = await db.all('SELECT name, affiliation, role FROM watchlist_speakers WHERE workstream_id = ?', wsId) || []; } catch {}
 
   const strategicCtx = (ws.strategic_context || '').trim();
   const lines = [
     `Workstream: "${ws.name}" (Client: ${ws.client})`,
     ...(strategicCtx ? ['', 'STRATEGIC CONTEXT:', strategicCtx, ''] : []),
-    `Total articles: ${stats.total}, Avg sentiment: ${stats.avg_sent ? stats.avg_sent.toFixed(1) : 'N/A'}/7`,
+    `Total articles: ${stats.total || 0}, Avg sentiment: ${stats.avg_sent ? Number(stats.avg_sent).toFixed(1) : 'N/A'}/7`,
     `Taxonomy topics: ${taxonomy.topics.join(', ')}`,
     `Stakeholders: ${(taxonomy.stakeholder_tags || []).join(', ')}`,
     '',
@@ -152,11 +154,18 @@ async function detectSpecificArticles(wsId, userMsg) {
 
 // Chat endpoint with streaming
 router.post('/:workstream_id/chat', async (req, res) => {
+  try {
   const { workstream_id } = req.params;
   const { message } = req.body;
   if (!message) return res.status(400).json({ error: 'message required' });
 
-  const ctx = await assembleContext(workstream_id);
+  let ctx;
+  try {
+    ctx = await assembleContext(workstream_id);
+  } catch (e) {
+    console.error('assembleContext error:', e);
+    return res.status(500).json({ error: 'Failed to assemble context: ' + e.message });
+  }
   if (!ctx) return res.status(404).json({ error: 'Workstream not found' });
 
   // Save user message
@@ -164,7 +173,12 @@ router.post('/:workstream_id/chat', async (req, res) => {
   await db.run('INSERT INTO strategy_messages (id, workstream_id, role, content) VALUES (?, ?, ?, ?)', userMsgId, workstream_id, 'user', message);
 
   // Check for specific article references → pull full text
-  const specificArticles = await detectSpecificArticles(workstream_id, message);
+  let specificArticles = [];
+  try {
+    specificArticles = await detectSpecificArticles(workstream_id, message);
+  } catch (e) {
+    console.error('detectSpecificArticles error:', e);
+  }
   let extraContext = '';
   if (specificArticles.length > 0) {
     extraContext = '\n\nFULL TEXT OF REFERENCED ARTICLES:\n' + specificArticles.map(a => `--- ${a.headline} ---\n${(a.full_text || '').slice(0, 6000)}`).join('\n\n');
@@ -252,8 +266,12 @@ Be direct, analytical, and actionable. No filler. Lead with the insight.`;
     res.write(`data: ${JSON.stringify({ done: true, message_id: assistMsgId })}\n\n`);
     res.end();
   } catch (e) {
-    res.write(`data: ${JSON.stringify({ error: e.message })}\n\n`);
-    res.end();
+    console.error('Strategy streaming error:', e);
+    try { res.write(`data: ${JSON.stringify({ error: e.message })}\n\n`); res.end(); } catch {}
+  }
+  } catch (e) {
+    console.error('Strategy handler crash:', e);
+    if (!res.headersSent) res.status(500).json({ error: 'Strategy failed: ' + e.message });
   }
 });
 
