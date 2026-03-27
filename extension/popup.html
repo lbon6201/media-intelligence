@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { width: 340px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; color: #333; background: #F8FAFC; }
+    .header { background: #0B0F19; color: white; padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; }
+    .header h1 { font-size: 14px; font-weight: 600; }
+    .header .user { font-size: 10px; color: #94A3B8; }
+    .content { padding: 16px; }
+    .field { margin-bottom: 12px; }
+    .field label { display: block; font-size: 11px; color: #475569; margin-bottom: 4px; font-weight: 500; }
+    .field input, .field select { width: 100%; padding: 6px 8px; border: 1px solid #E2E8F0; border-radius: 4px; font-size: 12px; background: white; }
+    .preview { background: white; border: 1px solid #E2E8F0; border-radius: 6px; padding: 10px; margin-bottom: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+    .preview h3 { font-size: 12px; color: #0F172A; margin-bottom: 4px; }
+    .preview p { font-size: 11px; color: #475569; }
+    .btn { width: 100%; padding: 8px; background: #2563EB; color: white; border: none; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; }
+    .btn:hover { background: #1D4ED8; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-sm { padding: 4px 8px; font-size: 11px; width: auto; }
+    .btn-ghost { background: transparent; color: #94A3B8; border: 1px solid #E2E8F0; }
+    .status { margin-top: 8px; padding: 8px; border-radius: 4px; font-size: 12px; text-align: center; display: none; }
+    .status.success { background: #DCFCE7; color: #166534; }
+    .status.error { background: #FEE2E2; color: #991B1B; }
+    .status.loading { background: #DBEAFE; color: #2563EB; }
+    .settings { margin-top: 12px; padding-top: 12px; border-top: 1px solid #E2E8F0; }
+    .settings summary { font-size: 11px; color: #94A3B8; cursor: pointer; }
+    .error-text { color: #DC2626; font-size: 11px; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>MIP Clipper</h1>
+    <div>
+      <span id="userName" class="user"></span>
+      <button id="logoutBtn" class="btn btn-sm btn-ghost" style="margin-left:4px;font-size:10px;padding:2px 6px;">Logout</button>
+    </div>
+  </div>
+  <div class="content">
+    <!-- Login Section -->
+    <div id="loginSection" style="display:none">
+      <div class="field">
+        <label>Email</label>
+        <input id="loginEmail" type="email" placeholder="you@example.com">
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input id="loginPassword" type="password">
+      </div>
+      <p id="loginError" class="error-text"></p>
+      <button id="loginBtn" class="btn" style="margin-top:8px">Sign In</button>
+    </div>
+
+    <!-- Clip Section -->
+    <div id="clipSection" style="display:none">
+      <div class="preview">
+        <h3 id="headline">Detecting article...</h3>
+        <p id="meta"></p>
+      </div>
+      <div class="field">
+        <label>Workstream</label>
+        <select id="workstream"></select>
+      </div>
+      <button class="btn" id="clip" disabled>Clip Article</button>
+      <div id="status" class="status"></div>
+    </div>
+
+    <details class="settings">
+      <summary>Settings</summary>
+      <div class="field" style="margin-top:8px">
+        <label>Server URL</label>
+        <input id="serverUrl" type="text" placeholder="http://localhost:3001">
+      </div>
+    </details>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
