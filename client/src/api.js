@@ -118,15 +118,32 @@ export const api = {
   deleteSnapshot: (workstreamId, id) => request(`/drift/${workstreamId}/snapshots/${id}`, { method: 'DELETE' }),
 
   // Export
-  downloadExcel: (workstreamId) => { window.open(`${BASE}/export/${workstreamId}/excel`, '_blank'); },
+  downloadExcel: async (workstreamId) => {
+    const res = await fetch(`${BASE}/export/${workstreamId}/excel`, { headers: getAuthHeaders() });
+    if (!res.ok) throw new Error('Export failed');
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'media-intelligence-export.xlsx'; a.click();
+    URL.revokeObjectURL(url);
+  },
   exportJson: (workstreamId) => request(`/export/${workstreamId}/json`),
   importJson: (data) => request('/export/import/json', { method: 'POST', body: JSON.stringify(data) }),
   getQuoteExportCount: (workstreamId, params) => {
     const qs = new URLSearchParams(Object.fromEntries(Object.entries(params).filter(([, v]) => v != null && v !== ''))).toString();
     return request(`/export/${workstreamId}/quotes/count?${qs}`);
   },
-  downloadQuoteExport: (workstreamId, params) => {
+  downloadQuoteExport: async (workstreamId, params) => {
     const qs = new URLSearchParams(Object.fromEntries(Object.entries(params).filter(([, v]) => v != null && v !== ''))).toString();
-    window.open(`${BASE}/export/${workstreamId}/quotes?${qs}`, '_blank');
+    const res = await fetch(`${BASE}/export/${workstreamId}/quotes?${qs}`, { headers: getAuthHeaders() });
+    if (!res.ok) throw new Error('Export failed');
+    const blob = await res.blob();
+    const cd = res.headers.get('content-disposition') || '';
+    const match = cd.match(/filename=(.+)/);
+    const filename = match ? match[1] : `quotes-export.${params.format || 'xlsx'}`;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
   },
 };

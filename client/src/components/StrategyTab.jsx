@@ -45,9 +45,10 @@ export default function StrategyTab({ workstream }) {
     setStreamText('');
 
     try {
+      const token = localStorage.getItem('mip-token');
       const res = await fetch(`/api/strategy/${workstream.id}/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({ message: msg }),
       });
 

@@ -196,6 +196,10 @@ Be direct, analytical, and actionable. No filler. Lead with the insight.`;
   // Get recent conversation history
   const history = (await db.all('SELECT role, content FROM strategy_messages WHERE workstream_id = ? ORDER BY created_at DESC LIMIT 20', workstream_id)).reverse();
 
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured' });
+  }
+
   // Stream response
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -213,6 +217,13 @@ Be direct, analytical, and actionable. No filler. Lead with the insight.`;
         messages: history.map(m => ({ role: m.role, content: m.content })),
       }),
     });
+
+    if (!apiRes.ok) {
+      const err = await apiRes.json().catch(() => ({ error: { message: `API returned ${apiRes.status}` } }));
+      res.write(`data: ${JSON.stringify({ error: err.error?.message || 'Claude API error' })}\n\n`);
+      res.end();
+      return;
+    }
 
     let fullResponse = '';
 
