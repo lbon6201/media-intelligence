@@ -12,7 +12,7 @@ router.post('/:workstream_id/generate', async (req, res) => {
   if (!ws) return res.status(404).json({ error: 'Workstream not found' });
 
   // Check cache
-  const cached = await db.get('SELECT * FROM narratives WHERE workstream_id = ? AND from_date = ? AND to_date = ? AND window = ? ORDER BY generated_at DESC LIMIT 1',
+  const cached = await db.get('SELECT * FROM narratives WHERE workstream_id = ? AND from_date = ? AND to_date = ? AND "window" = ? ORDER BY generated_at DESC LIMIT 1',
     workstream_id, from, to, comparison_window || 'week');
   if (cached && !req.body.force) {
     return res.json({ ...JSON.parse(cached.result), id: cached.id, cached: true });
@@ -85,7 +85,7 @@ Return ONLY valid JSON. No markdown.`;
     result.generated_at = new Date().toISOString();
 
     const id = uuid();
-    await db.run('INSERT INTO narratives (id, workstream_id, from_date, to_date, window, result, generated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    await db.run('INSERT INTO narratives (id, workstream_id, from_date, to_date, "window", result, generated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
       id, workstream_id, from, to, window, JSON.stringify(result), result.generated_at);
 
     res.json({ ...result, id });
