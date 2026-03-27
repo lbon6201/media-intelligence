@@ -1,9 +1,18 @@
 import { Router } from 'express';
 import { v4 as uuid } from 'uuid';
-import { JSDOM } from 'jsdom';
-import { Readability } from '@mozilla/readability';
 import db from '../db.js';
 import { cleanOutletName } from '../outletNorm.js';
+
+// Lazy-load jsdom and readability to avoid ESM issues on startup
+let JSDOM, Readability;
+async function loadParsers() {
+  if (!JSDOM) {
+    const jsdom = await import('jsdom');
+    JSDOM = jsdom.JSDOM;
+    const readability = await import('@mozilla/readability');
+    Readability = readability.Readability;
+  }
+}
 
 const router = Router();
 
@@ -15,6 +24,7 @@ function fingerprint(headline, outlet, date) {
 }
 
 async function fetchAndExtract(url) {
+  await loadParsers();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
 
