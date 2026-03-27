@@ -19,8 +19,14 @@ if (IS_POSTGRES) {
   });
   console.log('Using PostgreSQL');
 } else {
-  // ── SQLite setup ──
-  const Database = (await import('better-sqlite3')).default;
+  // ── SQLite setup (local dev only) ──
+  let Database;
+  try {
+    Database = (await import('better-sqlite3')).default;
+  } catch {
+    console.error('better-sqlite3 not available. Set DATABASE_URL for PostgreSQL in production.');
+    process.exit(1);
+  }
   const dbPath = join(__dirname, '..', 'media-intelligence.db');
   _sqlite = new Database(dbPath);
   _sqlite.pragma('journal_mode = WAL');
