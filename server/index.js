@@ -59,12 +59,17 @@ app.use('/api/calendar', authenticate, calendarRoutes);
 app.use('/api/drift', authenticate, driftRoutes);
 app.use('/api/activity', activityRoutes);
 
-// Production: serve React build
-if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(join(__dirname, '../client/dist')));
+// Serve React build (always, not just production — handles Railway and any built deployment)
+import { existsSync } from 'fs';
+const distPath = join(__dirname, '../client/dist');
+if (existsSync(distPath)) {
+  app.use(express.static(distPath));
   app.get('*', (req, res) => {
-    res.sendFile(join(__dirname, '../client/dist/index.html'));
+    res.sendFile(join(distPath, 'index.html'));
   });
+  console.log('Serving frontend from client/dist');
+} else {
+  app.get('/', (req, res) => res.json({ status: 'API running', frontend: 'not built — run npm run build' }));
 }
 
 const PORT = process.env.PORT || 3001;
