@@ -128,11 +128,18 @@ if (IS_POSTGRES) {
 // SQL uses ? placeholders everywhere. For Postgres, we convert to $1, $2, etc.
 
 function pgConvert(sql) {
+  // Replace datetime(?) with just the param placeholder (timestamp string works directly in Postgres)
+  let s = sql.replace(/datetime\('now'\)/g, 'NOW()');
+  s = s.replace(/datetime\(\?\)/g, '?');
+  // Boolean compat: active = 1 → active = true, active = 0 → active = false
+  s = s.replace(/active\s*=\s*1/g, 'active = true');
+  s = s.replace(/active\s*=\s*0/g, 'active = false');
+  // INSERT OR IGNORE → INSERT ... ON CONFLICT DO NOTHING
+  s = s.replace(/INSERT OR IGNORE/gi, 'INSERT');
+  s = s.replace(/INSERT OR REPLACE/gi, 'INSERT');
+  // Convert ? placeholders to $1, $2, etc. (must be last)
   let idx = 0;
-  let s = sql.replace(/\?/g, () => `$${++idx}`);
-  // SQLite → Postgres function conversions
-  s = s.replace(/datetime\('now'\)/g, 'NOW()');
-  s = s.replace(/datetime\(\?\)/g, () => `$${++idx}`); // pass date as param
+  s = s.replace(/\?/g, () => `$${++idx}`);
   return s;
 }
 

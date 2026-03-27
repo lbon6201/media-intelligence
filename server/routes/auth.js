@@ -7,47 +7,54 @@ import { signToken, authenticate } from '../middleware/auth.js';
 const router = Router();
 
 router.post('/register', async (req, res) => {
-  const { email, name, password, invite_code } = req.body;
+  try {
+    const { email, name, password, invite_code } = req.body;
 
-  if (!email || !name || !password) return res.status(400).json({ error: 'Email, name, and password required' });
+    if (!email || !name || !password) return res.status(400).json({ error: 'Email, name, and password required' });
 
-  // Check invite code
-  const requiredCode = process.env.ADMIN_INVITE_CODE;
-  if (requiredCode && invite_code !== requiredCode) {
-    return res.status(403).json({ error: 'Invalid invite code' });
+    const requiredCode = process.env.ADMIN_INVITE_CODE;
+    if (requiredCode && invite_code !== requiredCode) {
+      return res.status(403).json({ error: 'Invalid invite code' });
+    }
+
+    const existing = await db.get('SELECT id FROM users WHERE email = ?', email);
+    if (existing) return res.status(409).json({ error: 'Email already registered' });
+
+    const passwordHash = await bcrypt.hash(password, 10);
+    const id = uuid();
+
+    const userCount = await db.get('SELECT COUNT(*) as c FROM users');
+    const role = userCount.c === 0 ? 'admin' : 'viewer';
+
+    await db.run('INSERT INTO users (id, email, name, password_hash, role) VALUES (?, ?, ?, ?, ?)', id, email, name, passwordHash, role);
+
+    const token = signToken({ userId: id, email, name, role });
+    res.json({ token, user: { id, email, name, role } });
+  } catch (e) {
+    console.error('Register error:', e);
+    res.status(500).json({ error: 'Registration failed: ' + e.message });
   }
-
-  // Check if email exists
-  const existing = await db.get('SELECT id FROM users WHERE email = ?', email);
-  if (existing) return res.status(409).json({ error: 'Email already registered' });
-
-  const passwordHash = await bcrypt.hash(password, 10);
-  const id = uuid();
-
-  // First user is auto-admin
-  const userCount = await db.get('SELECT COUNT(*) as c FROM users');
-  const role = userCount.c === 0 ? 'admin' : 'viewer';
-
-  await db.run('INSERT INTO users (id, email, name, password_hash, role) VALUES (?, ?, ?, ?, ?)', id, email, name, passwordHash, role);
-
-  const token = signToken({ userId: id, email, name, role });
-  res.json({ token, user: { id, email, name, role } });
 });
 
 router.post('/login', async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
 
-  const user = await db.get('SELECT * FROM users WHERE email = ? AND active = 1', email);
-  if (!user) return res.status(401).json({ error: 'Invalid email or password' });
+    const user = await db.get('SELECT * FROM users WHERE email = ? AND active = 1', email);
+    if (!user) return res.status(401).json({ error: 'Invalid email or password' });
 
-  const valid = await bcrypt.compare(password, user.password_hash);
-  if (!valid) return res.status(401).json({ error: 'Invalid email or password' });
+    const valid = await bcrypt.compare(password, user.password_hash);
+    if (!valid) return res.status(401).json({ error: 'Invalid email or password' });
 
-  await db.run('UPDATE users SET last_login = datetime(?) WHERE id = ?', new Date().toISOString(), user.id);
+    await db.run('UPDATE users SET last_login = ? WHERE id = ?', new Date().toISOString(), user.id);
 
-  const token = signToken({ userId: user.id, email: user.email, name: user.name, role: user.role });
-  res.json({ token, user: { id: user.id, email: user.email, name: user.name, role: user.role } });
+    const token = signToken({ userId: user.id, email: user.email, name: user.name, role: user.role });
+    res.json({ token, user: { id: user.id, email: user.email, name: user.name, role: user.role } });
+  } catch (e) {
+    console.error('Login error:', e);
+    res.status(500).json({ error: 'Login failed: ' + e.message });
+  }
 });
 
 router.get('/me', authenticate, async (req, res) => {
