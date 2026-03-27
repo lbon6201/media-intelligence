@@ -12,8 +12,7 @@ async function request(path, options = {}) {
   });
   if (res.status === 401) {
     localStorage.removeItem('mip-token');
-    window.location.reload();
-    throw new Error('Session expired');
+    throw new Error('Not authenticated');
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
