@@ -81,6 +81,20 @@ router.post('/change-password', authenticate, async (req, res) => {
   res.json({ success: true });
 });
 
+// One-time: promote to admin with invite code (for bootstrapping)
+router.post('/promote', authenticate, async (req, res) => {
+  try {
+    const { invite_code } = req.body;
+    const requiredCode = process.env.ADMIN_INVITE_CODE;
+    if (!requiredCode || invite_code !== requiredCode) return res.status(403).json({ error: 'Invalid invite code' });
+    await db.run('UPDATE users SET role = ? WHERE id = ?', 'admin', req.user.userId);
+    const token = signToken({ userId: req.user.userId, email: req.user.email, name: req.user.name, role: 'admin' });
+    res.json({ success: true, token, role: 'admin' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Admin: list users
 router.get('/users', authenticate, async (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin required' });
