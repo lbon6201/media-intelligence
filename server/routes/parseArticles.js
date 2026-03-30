@@ -48,8 +48,8 @@ Return ONLY valid JSON with these fields:
   "headline": "the article headline/title",
   "author": "author name(s) or null if not found",
   "outlet": "publication name or null",
-  "publish_date": "date in any format found, or null",
-  "body_start": first 10 words of the actual article body (not headline, not metadata)
+  "publish_date": "YYYY-MM-DD format. Convert any date you find to this format. If only month and year, use the 1st (e.g. 2026-03-01). If no date found, return null.",
+  "body_start": "first 10 words of the actual article body (not headline, not metadata)"
 }
 
 If the text doesn't contain an article, return {"headline": null}.
