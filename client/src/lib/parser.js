@@ -34,16 +34,82 @@ function normalizeOutlet(raw) {
 
 // ── Noise patterns to strip ──
 const NOISE = [
+  // Factiva-specific
   /^page\s+\d+\s+of\s+\d+$/i, /^factiva$/i, /^dow\s*jones/i, /^\d+$/,
-  /^search\s+results$/i, /^display\s+options$/i, /^copyright\s/i, /©/,
-  /all\s+rights\s+reserved/i, /^an\s+document/i,
-  // Factiva field codes (2-letter codes on their own line)
-  /^(se|hd|by|cr|pd|sn|sc|la|cy|lp|td|rf|co|in|ns|re|ipc)$/i,
-  /^la\s+en$/i,
+  /^search\s+results$/i, /^display\s+options$/i, /^an\s+document/i,
+  /^(se|hd|by|cr|pd|sn|sc|la|cy|lp|td|rf|co|in|ns|re|ipc)$/i, /^la\s+en$/i,
+  // Legal/copyright
+  /^copyright\s/i, /©/, /all\s+rights\s+reserved/i, /terms\s+(of\s+)?(use|service)/i,
+  /privacy\s+policy/i, /cookie\s+(policy|preferences|settings)/i,
+  // Navigation / UI chrome
+  /^(home|menu|search|sign\s*in|log\s*in|subscribe|register|newsletter)/i,
+  /^(share|tweet|email|print|save|bookmark|comment|follow\s+us)/i,
+  /^(facebook|twitter|linkedin|instagram|youtube|tiktok|whatsapp|telegram|reddit)/i,
+  /^(previous|next|related|more\s+from|recommended|trending|popular|most\s+read)/i,
+  /^(advertisement|sponsored|promoted|ad|advert)\s*$/i,
+  /^(skip\s+to|jump\s+to|go\s+to|back\s+to)/i,
+  /^(accept|reject|manage|customize)\s*(all\s*)?(cookies?)?$/i,
+  /^(continue\s+reading|read\s+more|show\s+more|load\s+more|see\s+all)/i,
+  /^(sign\s+up|subscribe|get\s+access|unlock|premium|member)/i,
+  // Misc web noise
+  /^(close|dismiss|got\s+it|no\s+thanks|maybe\s+later|not\s+now)$/i,
+  /^[\u2022\u25CF\u25CB\u25AA\u25AB\u2023]\s*$/,  // bullet point characters alone
+  /^\|+$/, /^-+$/, /^=+$/, /^_+$/,  // separator lines
+  /^(photo|image|video|audio|graphic|chart|illustration|source):/i,
+  /^(getty|reuters|ap|afp|bloomberg)\s*(images?|photos?)?$/i,
+  /^\d+\s*(min|minute|hour|sec|second)s?\s*(read|ago|left)/i,  // "5 min read"
+  /^(updated?|modified|edited)\s*:?\s*$/i,
+  /^(tags?|topics?|categories?|section|filed\s+under)\s*:?\s*$/i,
+];
+
+// Lines that are definitely web page noise (aggressive — for full-page copies)
+const WEB_NOISE_AGGRESSIVE = [
+  /^.{0,3}$/,  // Very short lines (1-3 chars) are usually menu items or icons
+  /^[A-Z\s]{1,20}$/, // ALL CAPS short text is usually nav ("HOME", "MARKETS", "OPINION")
 ];
 
 function cleanText(text) {
   return text.split('\n').filter(line => {
+    const t = line.trim();
+    if (!t) return true;
+    return !NOISE.some(p => p.test(t));
+  }).join('\n');
+}
+
+// More aggressive cleaning for full web page pastes
+function deepCleanText(text) {
+  const lines = text.split('\n');
+
+  // Find the "content zone" — longest run of substantial lines
+  // Web pages have noise at top (nav) and bottom (footer), content in middle
+  const scored = lines.map(line => {
+    const t = line.trim();
+    if (!t) return 0;
+    if (NOISE.some(p => p.test(t))) return -1;
+    if (WEB_NOISE_AGGRESSIVE.some(p => p.test(t))) return -0.5;
+    if (t.length > 60) return 2;  // Long lines are likely article text
+    if (t.length > 30) return 1;
+    return 0.5;
+  });
+
+  // Find best window of 5+ consecutive positive-scored lines
+  let bestStart = 0, bestEnd = lines.length, bestScore = 0;
+  for (let start = 0; start < scored.length; start++) {
+    let runScore = 0;
+    for (let end = start; end < scored.length; end++) {
+      runScore += scored[end];
+      if (end - start >= 4 && runScore > bestScore) {
+        bestScore = runScore;
+        bestStart = start;
+        bestEnd = end + 1;
+      }
+    }
+  }
+
+  // Expand the window backwards to capture headline/byline (up to 10 lines before)
+  const expandedStart = Math.max(0, bestStart - 10);
+
+  return lines.slice(expandedStart, bestEnd).filter(line => {
     const t = line.trim();
     if (!t) return true;
     return !NOISE.some(p => p.test(t));
@@ -301,7 +367,9 @@ export function parseFactiva(rawText, workstreamId) {
   const blocks = splitArticles(cleaned);
 
   return blocks.map(block => {
-    const lines = block.split('\n');
+    // Deep clean each block to strip web page noise (nav, footer, ads, etc.)
+    const deepCleaned = deepCleanText(block);
+    const lines = deepCleaned.split('\n');
     const headerLines = lines.slice(0, 25);
 
     // Classify each header line
