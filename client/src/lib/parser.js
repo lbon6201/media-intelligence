@@ -77,6 +77,9 @@ const DATE_RX = [
   /^\d{4}-\d{2}-\d{2}$/,
   /^\d{1,2}\/\d{1,2}\/\d{2,4}$/,
   /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)/i,
+  /^(?:Published|Updated|Posted|Date)[:\s]/i,           // "Published: March 26, 2026"
+  /^(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}/i,  // "Mar 26, 2026"
+  /^\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4}$/i,  // "26 Mar 2026"
 ];
 
 const BYLINE_RX = [
@@ -84,6 +87,10 @@ const BYLINE_RX = [
   /^by\s+\w+\s+\w+/i,                              // "by firstname lastname"
   /^[A-Z][a-z]+\s+[A-Z][a-z]+\s+(?:and|,)\s+[A-Z]/,  // "John Smith and Jane Doe"
   /^[A-Z][a-z]+\s+[A-Z][a-z]+\s*$/,               // "John Smith" alone on a line (2 capitalized words)
+  /^[A-Z][a-z]+\s+[A-Z][a-z]+\s*\|/,              // "John Smith | Reuters"
+  /^[A-Z][a-z]+\s+[A-Z][a-z]+\s*,\s*[A-Z]/,       // "John Smith, Reuters"
+  /^(?:reporter|author|written by|reported by):\s*/i,  // "Reporter: John Smith"
+  /^[A-Z][a-z]+\s+[A-Z]\.\s+[A-Z][a-z]+/,          // "John A. Smith"
 ];
 
 const WORDCOUNT_RX = /^\d{2,5}\s*words$/i;
@@ -173,9 +180,12 @@ function extractAuthor(lines, lineTypes) {
     }
   }
 
-  // Strategy 2: Look for "By ..." pattern anywhere in first 20 lines
+  // Strategy 2: Look for "By ..." or "Author: ..." pattern anywhere in first 20 lines
   for (let i = 0; i < Math.min(lines.length, 20); i++) {
-    const m = lines[i].match(/^(?:by|BY|By)\s+(.+)/);
+    const t = lines[i].trim();
+    const m = t.match(/^(?:by|BY|By)\s+(.+)/)
+      || t.match(/^(?:author|reporter|written by|reported by)[:\s]+(.+)/i)
+      || t.match(/^(.+?)\s*\|\s*(?:Reuters|Bloomberg|AP|Associated Press|CNBC)/i);  // "John Smith | Reuters"
     if (m) return cleanAuthorName(m[1]);
   }
 
@@ -208,12 +218,14 @@ function extractAuthor(lines, lineTypes) {
 function cleanAuthorName(raw) {
   if (!raw) return null;
   let name = raw
-    .replace(/^(?:by|BY|By)\s+/i, '')
+    .replace(/^(?:by|BY|By|author|reporter|written by|reported by)[:\s]+/i, '')
     .replace(/\s+and\s+Reuters.*$/i, '')  // "John Smith and Reuters"
     .replace(/\s*\|.*$/, '')              // "John Smith | Bloomberg"
-    .replace(/\s*,\s*(staff|reporter|correspondent|editor|columnist|senior|special|contributing).*/i, '')
-    .replace(/\s+in\s+\w+.*$/i, '')       // "John Smith in London"
+    .replace(/\s*,\s*(staff|reporter|correspondent|editor|columnist|senior|special|contributing|bureau|chief|deputy|managing|news|business|finance|economics).*/i, '')
+    .replace(/\s+in\s+(?:New York|London|Washington|San Francisco|Hong Kong|Singapore|Tokyo|Chicago|Los Angeles|Beijing|Mumbai).*$/i, '')
     .replace(/\s*\(.*?\)\s*$/, '')        // "John Smith (London)"
+    .replace(/\s*@\w+.*$/, '')            // "John Smith @johnsmith"
+    .replace(/\s+for\s+.+$/i, '')         // "John Smith for The Guardian"
     .trim();
 
   // Don't return names that are too short or too long
@@ -233,7 +245,10 @@ function extractDate(lines, lineTypes) {
   for (const line of lines.slice(0, 20)) {
     const m = line.match(/(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4})/i)
       || line.match(/((?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4})/i)
-      || line.match(/(\d{4}-\d{2}-\d{2})/);
+      || line.match(/(\d{4}-\d{2}-\d{2})/)
+      || line.match(/((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[.\s]+\d{1,2},?\s+\d{4})/i)
+      || line.match(/(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[.\s]+\d{4})/i)
+      || line.match(/(?:Published|Updated|Posted|Date)[:\s]+(.+\d{4})/i);
     if (m) return m[1];
   }
   return null;
