@@ -1,9 +1,13 @@
-const DEFAULT_SERVER = 'http://localhost:3001';
+const DEFAULT_SERVER = 'https://media-intelligence-production-0383.up.railway.app';
 let articleData = null;
+
+function getServerUrl(stored) {
+  return (stored.serverUrl || DEFAULT_SERVER).replace(/\/+$/, '');
+}
 
 async function init() {
   const stored = await chrome.storage.local.get(['serverUrl', 'authToken', 'selectedWorkstream']);
-  const serverUrl = stored.serverUrl || DEFAULT_SERVER;
+  const serverUrl = getServerUrl(stored);
   document.getElementById('serverUrl').value = serverUrl;
 
   document.getElementById('serverUrl').addEventListener('change', (e) => {
@@ -40,7 +44,7 @@ function showLoginForm() {
 
 async function handleLogin() {
   const stored = await chrome.storage.local.get(['serverUrl']);
-  const serverUrl = stored.serverUrl || DEFAULT_SERVER;
+  const serverUrl = getServerUrl(stored);
   const email = document.getElementById('loginEmail').value;
   const password = document.getElementById('loginPassword').value;
 
@@ -119,7 +123,7 @@ async function clipArticle() {
   showStatus('loading', 'Clipping...');
 
   const stored = await chrome.storage.local.get(['serverUrl', 'authToken']);
-  const serverUrl = stored.serverUrl || DEFAULT_SERVER;
+  const serverUrl = getServerUrl(stored);
   const workstreamId = document.getElementById('workstream').value;
 
   const raw = `${articleData.headline.toLowerCase().trim()}|${(articleData.outlet || '').toLowerCase().trim()}|${(articleData.publish_date || '').trim()}`;
