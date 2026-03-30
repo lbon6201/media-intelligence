@@ -106,7 +106,7 @@ export default function NetworkTab({ workstream }) {
             const p = positions[n.id];
             if (!p) return null;
             const size = Math.min(4 + n.count * 2, 16);
-            const color = n.avg_sentiment ? sentimentDot(Math.round(n.avg_sentiment)) : nodeColors[n.type] || '#94A3B8';
+            const color = nodeColors[n.type] || '#94A3B8';
             const dimmed = highlightedNodes && !highlightedNodes.has(n.id);
             return (
               <g key={n.id} onClick={() => setSelected(n.id === selected ? null : n.id)} className="cursor-pointer" opacity={dimmed ? 0.15 : 1}>
@@ -130,7 +130,10 @@ export default function NetworkTab({ workstream }) {
         return (
           <div className="card p-4">
             <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{node.name} <span className="font-normal text-xs" style={{ color: 'var(--text-muted)' }}>({node.type})</span></h3>
-            <p className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>{node.count} articles, avg sentiment {node.avg_sentiment || '—'}</p>
+            <p className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>
+              {node.count} articles
+              {node.avg_sentiment != null && <> · avg sentiment: <span style={{ color: sentimentDot(Math.round(node.avg_sentiment)), fontWeight: 600 }}>{Number(node.avg_sentiment).toFixed(1)}</span></>}
+            </p>
             <div className="mt-2 flex flex-wrap gap-1">
               {connections.slice(0, 15).map(c => (
                 <span key={c.id} className="text-xs px-2 py-0.5 rounded" style={{ background: 'var(--bg-content)', color: 'var(--text-secondary)' }}>{c.name} ({c.weight})</span>

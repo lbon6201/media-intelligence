@@ -79,7 +79,7 @@ router.post('/:workstream_id', async (req, res) => {
         for (const q of (result.institutional_investor_quotes || [])) {
           if (q.quote && q.source) {
             await db.run(`INSERT INTO quotes (id, article_id, workstream_id, text, type, speaker, speaker_org, speaker_type, sentiment, stance, role, context) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              uuid(), article.id, article.workstream_id, q.quote, 'institutional_investor', q.source, null, 'institutional_investor', null, q.stance || 'neutral', null, null);
+              uuid(), article.id, article.workstream_id, q.quote, 'external', q.source, null, 'institutional_investor', null, q.stance || 'neutral', 'institutional_investor', null);
           }
         }
         for (const q of (result.internal_quotes || [])) {

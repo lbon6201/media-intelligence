@@ -125,10 +125,23 @@ router.post('/normalize-outlets', async (req, res) => {
 });
 
 router.put('/:id', async (req, res) => {
-  const { cl_status, internal_notes, internal_flags, internal_tags, annotated_by } = req.body;
+  const { cl_status, internal_notes, internal_flags, internal_tags, annotated_by, headline, outlet, author, publish_date } = req.body;
   if (cl_status) {
     const now = cl_status === 'approved' ? new Date().toISOString() : null;
     await db.run('UPDATE articles SET cl_status = ?, approved_at = COALESCE(?, approved_at) WHERE id = ?', cl_status, now, req.params.id);
+  }
+  // Update editable article metadata fields
+  if (headline !== undefined || outlet !== undefined || author !== undefined || publish_date !== undefined) {
+    const sets = [];
+    const vals = [];
+    if (headline !== undefined) { sets.push('headline = ?'); vals.push(headline); }
+    if (outlet !== undefined) { sets.push('outlet = ?'); vals.push(outlet); }
+    if (author !== undefined) { sets.push('author = ?'); vals.push(author); }
+    if (publish_date !== undefined) { sets.push('publish_date = ?'); vals.push(publish_date); }
+    if (sets.length > 0) {
+      vals.push(req.params.id);
+      await db.run(`UPDATE articles SET ${sets.join(', ')} WHERE id = ?`, ...vals);
+    }
   }
   if (internal_notes !== undefined || internal_flags !== undefined || internal_tags !== undefined || annotated_by !== undefined) {
     const sets = [];

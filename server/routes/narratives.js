@@ -5,48 +5,56 @@ import db from '../db.js';
 const router = Router();
 
 router.post('/:workstream_id/generate', async (req, res) => {
-  const { workstream_id } = req.params;
-  const { from, to, comparison_window } = req.body;
+  try {
+    const { workstream_id } = req.params;
+    const { from, to, comparison_window } = req.body;
 
-  const ws = await db.get('SELECT * FROM workstreams WHERE id = ?', workstream_id);
-  if (!ws) return res.status(404).json({ error: 'Workstream not found' });
+    const ws = await db.get('SELECT * FROM workstreams WHERE id = ?', workstream_id);
+    if (!ws) return res.status(404).json({ error: 'Workstream not found' });
 
-  // Check cache
-  const cached = await db.get('SELECT * FROM narratives WHERE workstream_id = ? AND from_date = ? AND to_date = ? AND "window" = ? ORDER BY generated_at DESC LIMIT 1',
-    workstream_id, from, to, comparison_window || 'week');
-  if (cached && !req.body.force) {
-    return res.json({ ...JSON.parse(cached.result), id: cached.id, cached: true });
-  }
+    // Check cache
+    let cached;
+    try {
+      cached = await db.get('SELECT * FROM narratives WHERE workstream_id = ? AND from_date = ? AND to_date = ? AND "window" = ? ORDER BY generated_at DESC LIMIT 1',
+        workstream_id, from, to, comparison_window || 'week');
+    } catch (dbErr) {
+      console.error('Narratives cache query failed (table may need recreation):', dbErr.message);
+      // Table might not exist or have schema issues — continue without cache
+      cached = null;
+    }
+    if (cached && !req.body.force) {
+      return res.json({ ...JSON.parse(cached.result), id: cached.id, cached: true });
+    }
 
-  const articles = await db.all(`SELECT headline, outlet, author, publish_date, cl_sentiment_score, cl_topics, cl_key_entities, cl_key_takeaway, cl_firms_mentioned
-    FROM articles WHERE workstream_id = ? AND cl_status IN ('classified','approved') AND publish_date >= ? AND publish_date <= ? ORDER BY publish_date ASC`,
-    workstream_id, from || '2000-01-01', to || '2099-12-31');
+    const articles = await db.all(`SELECT headline, outlet, author, publish_date, cl_sentiment_score, cl_topics, cl_key_entities, cl_key_takeaway, cl_firms_mentioned
+      FROM articles WHERE workstream_id = ? AND cl_status IN ('classified','approved') AND publish_date >= ? AND publish_date <= ? ORDER BY publish_date ASC`,
+      workstream_id, from || '2000-01-01', to || '2099-12-31');
 
-  if (articles.length === 0) return res.json({ error: 'No articles in date range' });
+    if (articles.length === 0) return res.json({ error: 'No articles in date range' });
 
-  // Bucket into windows
-  const window = comparison_window || 'week';
-  const buckets = {};
-  for (const a of articles) {
-    const key = window === 'month' ? (a.publish_date || '').slice(0, 7) : getISOWeek(a.publish_date);
-    if (!buckets[key]) buckets[key] = [];
-    buckets[key].push(a);
-  }
+    // Bucket into windows
+    const window = comparison_window || 'week';
+    const buckets = {};
+    for (const a of articles) {
+      const key = window === 'month' ? (a.publish_date || '').slice(0, 7) : getISOWeek(a.publish_date);
+      if (!buckets[key]) buckets[key] = [];
+      buckets[key].push(a);
+    }
 
-  // Build summary per bucket
-  const periodSummaries = Object.entries(buckets).sort(([a], [b]) => a.localeCompare(b)).map(([period, arts]) => {
-    const avgSent = arts.reduce((s, a) => s + (a.cl_sentiment_score || 4), 0) / arts.length;
-    const topics = {};
-    const entities = {};
-    arts.forEach(a => {
-      try { JSON.parse(a.cl_topics || '[]').forEach(t => topics[t] = (topics[t] || 0) + 1); } catch {}
-      try { JSON.parse(a.cl_key_entities || '[]').forEach(e => entities[e] = (entities[e] || 0) + 1); } catch {}
+    // Build summary per bucket
+    const periodSummaries = Object.entries(buckets).sort(([a], [b]) => a.localeCompare(b)).map(([period, arts]) => {
+      const avgSent = arts.reduce((s, a) => s + (a.cl_sentiment_score || 4), 0) / arts.length;
+      const topics = {};
+      const entities = {};
+      arts.forEach(a => {
+        try { JSON.parse(a.cl_topics || '[]').forEach(t => topics[t] = (topics[t] || 0) + 1); } catch {}
+        try { JSON.parse(a.cl_key_entities || '[]').forEach(e => entities[e] = (entities[e] || 0) + 1); } catch {}
+      });
+      return `Period: ${period} (${arts.length} articles, avg sentiment: ${avgSent.toFixed(1)})\nHeadlines: ${arts.map(a => `"${a.headline}" (${a.outlet})`).join('; ')}\nTop themes: ${Object.entries(topics).sort((a,b) => b[1]-a[1]).slice(0,5).map(([t,c]) => `${t}(${c})`).join(', ')}\nTop entities: ${Object.entries(entities).sort((a,b) => b[1]-a[1]).slice(0,5).map(([e,c]) => `${e}(${c})`).join(', ')}`;
     });
-    return `Period: ${period} (${arts.length} articles, avg sentiment: ${avgSent.toFixed(1)})\nHeadlines: ${arts.map(a => `"${a.headline}" (${a.outlet})`).join('; ')}\nTop themes: ${Object.entries(topics).sort((a,b) => b[1]-a[1]).slice(0,5).map(([t,c]) => `${t}(${c})`).join(', ')}\nTop entities: ${Object.entries(entities).sort((a,b) => b[1]-a[1]).slice(0,5).map(([e,c]) => `${e}(${c})`).join(', ')}`;
-  });
 
-  const strategicCtx = (ws.strategic_context || '').trim();
-  const systemPrompt = `You are a strategic communications analyst tracking media narrative evolution.
+    const strategicCtx = (ws.strategic_context || '').trim();
+    const systemPrompt = `You are a strategic communications analyst tracking media narrative evolution.
 ${strategicCtx ? `\nCLIENT CONTEXT:\n${strategicCtx}\n\nAssess narrative shifts relative to the client's desired positioning. Flag when coverage is moving toward or away from the client's preferred framing.\n` : ''}
 Given the following media coverage data organized by time period, identify:
 
@@ -69,28 +77,55 @@ Return as JSON:
 }
 Return ONLY valid JSON. No markdown.`;
 
-  const userMsg = `Workstream: "${ws.name}"\nDate range: ${from} to ${to}\n\n${periodSummaries.join('\n\n')}`;
+    const userMsg = `Workstream: "${ws.name}"\nDate range: ${from} to ${to}\n\n${periodSummaries.join('\n\n')}`;
 
-  try {
-    const apiRes = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 3000, system: systemPrompt, messages: [{ role: 'user', content: userMsg }] }),
-    });
+    let apiRes;
+    try {
+      apiRes = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 3000, system: systemPrompt, messages: [{ role: 'user', content: userMsg }] }),
+      });
+    } catch (fetchErr) {
+      console.error('Claude API fetch failed:', fetchErr.message);
+      return res.status(502).json({ error: 'Failed to reach Claude API: ' + fetchErr.message });
+    }
+
     const d = await apiRes.json();
-    if (d.error) throw new Error(d.error.message);
+    if (d.error) {
+      console.error('Claude API error:', d.error);
+      return res.status(502).json({ error: 'Claude API error: ' + (d.error.message || JSON.stringify(d.error)) });
+    }
+
     let text = d.content?.[0]?.text || '';
+    if (!text) {
+      console.error('Claude API returned empty content:', JSON.stringify(d));
+      return res.status(502).json({ error: 'Claude API returned empty response' });
+    }
+
     text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
-    const result = JSON.parse(text);
+    let result;
+    try {
+      result = JSON.parse(text);
+    } catch (parseErr) {
+      console.error('Failed to parse Claude response as JSON:', text.slice(0, 500));
+      return res.status(500).json({ error: 'Failed to parse narrative response as JSON' });
+    }
     result.generated_at = new Date().toISOString();
 
     const id = uuid();
-    await db.run('INSERT INTO narratives (id, workstream_id, from_date, to_date, "window", result, generated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      id, workstream_id, from, to, window, JSON.stringify(result), result.generated_at);
+    try {
+      await db.run('INSERT INTO narratives (id, workstream_id, from_date, to_date, "window", result, generated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        id, workstream_id, from, to, window, JSON.stringify(result), result.generated_at);
+    } catch (insertErr) {
+      console.error('Failed to save narrative to DB:', insertErr.message);
+      // Still return the result even if caching fails
+    }
 
     res.json({ ...result, id });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    console.error('Narrative generation failed:', e);
+    res.status(500).json({ error: e.message || 'Unknown error during narrative generation' });
   }
 });
 

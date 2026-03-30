@@ -4,7 +4,7 @@ import db from '../db.js';
 const router = Router();
 
 router.get('/', async (req, res) => {
-  const { workstream_id, type, stance, search } = req.query;
+  const { workstream_id, type, stance, search, role } = req.query;
   if (!workstream_id) return res.status(400).json({ error: 'workstream_id required' });
 
   let sql = `SELECT q.*, a.headline as article_headline, a.outlet as article_outlet, a.publish_date as article_date
@@ -13,6 +13,7 @@ router.get('/', async (req, res) => {
   const params = [workstream_id];
 
   if (type) { sql += ' AND q.type = ?'; params.push(type); }
+  if (role) { sql += ' AND q.role = ?'; params.push(role); }
   if (stance) { sql += ' AND q.stance = ?'; params.push(stance); }
   if (search) { sql += ' AND (q.text LIKE ? OR q.speaker LIKE ?)'; params.push(`%${search}%`, `%${search}%`); }
 

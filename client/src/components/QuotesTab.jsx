@@ -3,7 +3,6 @@ import { api } from '../api';
 
 const CATEGORY_META = {
   external: { label: 'External', color: 'bg-purple-100 text-purple-700', desc: 'Voices outside the industry' },
-  institutional_investor: { label: 'Institutional Investor', color: 'bg-blue-100 text-blue-700', desc: 'LPs investing in funds' },
   internal: { label: 'Internal', color: 'bg-amber-100 text-amber-700', desc: 'People at the firms' },
 };
 
@@ -42,16 +41,19 @@ export default function QuotesTab({ workstream }) {
 
   async function handleExportQuotes(format) {
     try {
-      await api.downloadQuoteExport(workstream.id, {
-        format,
-        stance: filters.stance || 'negative,neutral,positive',
-        type: filters.type || 'external,institutional_investor,internal',
-      });
+      const params = { format };
+      if (filters.type) params.type = filters.type;
+      else params.type = 'external,internal';
+      if (filters.stance) params.stance = filters.stance;
+      else params.stance = 'negative,neutral,positive';
+      if (filters.search) params.search = filters.search;
+      if (filters.role) params.role = filters.role;
+      await api.downloadQuoteExport(workstream.id, params);
     } catch (e) { alert('Export error: ' + e.message); }
   }
 
   // Group quotes by category
-  const grouped = { external: [], institutional_investor: [], internal: [] };
+  const grouped = { external: [], internal: [] };
   quotes.forEach(q => {
     const cat = q.type || 'external';
     if (grouped[cat]) grouped[cat].push(q);
@@ -109,7 +111,6 @@ export default function QuotesTab({ workstream }) {
         <select value={filters.type} onChange={e => setFilters({ ...filters, type: e.target.value })}>
           <option value="">All Categories</option>
           <option value="external">External</option>
-          <option value="institutional_investor">Institutional Investor</option>
           <option value="internal">Internal</option>
         </select>
         <select value={filters.role} onChange={e => setFilters({ ...filters, role: e.target.value })}>
@@ -124,6 +125,7 @@ export default function QuotesTab({ workstream }) {
             <option value="journalist">Journalist</option>
             <option value="analyst">Analyst</option>
             <option value="investor_advocate">Investor Advocate</option>
+            <option value="institutional_investor">Institutional Investor</option>
           </optgroup>
           <optgroup label="Internal">
             <option value="fund_executive">Fund Executive</option>

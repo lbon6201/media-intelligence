@@ -253,9 +253,18 @@ function ExpandedDetail({ article: a, onUpdate }) {
   const [tags, setTags] = useState(a.internal_tags || []);
   const [tagInput, setTagInput] = useState('');
   const [annotBy, setAnnotBy] = useState(a.annotated_by || '');
+  const [headline, setHeadline] = useState(a.headline || '');
+  const [outlet, setOutlet] = useState(a.outlet || '');
+  const [author, setAuthor] = useState(a.author || '');
+  const [publishDate, setPublishDate] = useState(a.publish_date || '');
 
   async function saveAnnotation(updates) {
     await api.updateArticle(a.id, updates);
+    onUpdate?.();
+  }
+
+  async function saveField(field, value) {
+    await api.updateArticle(a.id, { [field]: value });
     onUpdate?.();
   }
 
@@ -284,9 +293,14 @@ function ExpandedDetail({ article: a, onUpdate }) {
     <div className="space-y-4 text-sm">
     <div className="grid grid-cols-2 gap-6">
       <div className="space-y-3">
-        <div>
-          <h4 className="font-semibold text-[#002855] mb-1">{a.headline}</h4>
-          <p className="text-[#4a6080] text-xs">{[a.outlet, a.author, formatDate(a.publish_date), `${a.word_count} words`].filter(Boolean).join(' · ')}</p>
+        <div className="space-y-1.5">
+          <input className="w-full font-semibold text-[#002855] text-sm border border-transparent hover:border-[#b8cce0] focus:border-[#0057b8] rounded px-1 py-0.5 -ml-1 bg-transparent focus:bg-white" value={headline} onChange={e => setHeadline(e.target.value)} onBlur={() => { if (headline !== a.headline) saveField('headline', headline); }} />
+          <div className="flex gap-2 items-center flex-wrap">
+            <input className="text-xs text-[#4a6080] border border-transparent hover:border-[#b8cce0] focus:border-[#0057b8] rounded px-1 py-0.5 bg-transparent focus:bg-white w-32" placeholder="Outlet" value={outlet} onChange={e => setOutlet(e.target.value)} onBlur={() => { if (outlet !== (a.outlet || '')) saveField('outlet', outlet); }} />
+            <input className="text-xs text-[#4a6080] border border-transparent hover:border-[#b8cce0] focus:border-[#0057b8] rounded px-1 py-0.5 bg-transparent focus:bg-white w-32" placeholder="Author" value={author} onChange={e => setAuthor(e.target.value)} onBlur={() => { if (author !== (a.author || '')) saveField('author', author); }} />
+            <input type="date" className="text-xs text-[#4a6080] border border-transparent hover:border-[#b8cce0] focus:border-[#0057b8] rounded px-1 py-0.5 bg-transparent focus:bg-white" value={publishDate} onChange={e => { setPublishDate(e.target.value); saveField('publish_date', e.target.value); }} />
+            <span className="text-xs text-[#4a6080]">{a.word_count} words</span>
+          </div>
           {a.url && <a href={a.url} target="_blank" rel="noopener noreferrer" className="text-[#0057b8] text-xs hover:underline">{a.url}</a>}
         </div>
 
