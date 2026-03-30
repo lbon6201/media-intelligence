@@ -27,6 +27,7 @@ import outletTierRoutes from './routes/outletTiers.js';
 import strategyRoutes from './routes/strategy.js';
 import networkRoutes from './routes/network.js';
 import calendarRoutes from './routes/calendar.js';
+import parseArticleRoutes from './routes/parseArticles.js';
 import driftRoutes from './routes/drift.js';
 import activityRoutes from './routes/activity.js';
 
@@ -58,6 +59,7 @@ app.use('/api/network', authenticate, networkRoutes);
 app.use('/api/calendar', authenticate, calendarRoutes);
 app.use('/api/drift', authenticate, driftRoutes);
 app.use('/api/activity', activityRoutes);
+app.use('/api/articles/parse', authenticate, parseArticleRoutes);
 
 // Serve React build (always, not just production — handles Railway and any built deployment)
 import { existsSync } from 'fs';
