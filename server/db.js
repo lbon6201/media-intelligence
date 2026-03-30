@@ -67,6 +67,14 @@ if (IS_POSTGRES) {
     for (const sql of pgMigrations) {
       try { await _pgPool.query(sql); } catch {}
     }
+    // Normalize stance labels in existing quotes
+    try {
+      await _pgPool.query("UPDATE quotes SET stance = 'positive' WHERE stance IN ('bullish', 'supportive')");
+      await _pgPool.query("UPDATE quotes SET stance = 'negative' WHERE stance IN ('bearish')");
+      await _pgPool.query("UPDATE quotes SET stance = 'neutral' WHERE stance IN ('cautious', 'defensive')");
+      // Also normalize institutional_investor type to external
+      await _pgPool.query("UPDATE quotes SET type = 'external', role = 'institutional_investor' WHERE type = 'institutional_investor'");
+    } catch {}
     console.log('PostgreSQL migrations applied');
   } catch (e) {
     console.error('PostgreSQL schema error:', e.message);

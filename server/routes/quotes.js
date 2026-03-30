@@ -3,6 +3,27 @@ import db from '../db.js';
 
 const router = Router();
 
+// Normalize all existing stance labels
+router.post('/normalize-stances', async (req, res) => {
+  try {
+    const updates = [
+      ['positive', 'bullish'],
+      ['positive', 'supportive'],
+      ['negative', 'bearish'],
+      ['neutral', 'cautious'],
+      ['neutral', 'defensive'],
+    ];
+    let changed = 0;
+    for (const [newStance, oldStance] of updates) {
+      const result = await db.run('UPDATE quotes SET stance = ? WHERE stance = ?', newStance, oldStance);
+      changed += result.changes || 0;
+    }
+    res.json({ success: true, changed });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.get('/', async (req, res) => {
   const { workstream_id, type, stance, search, role } = req.query;
   if (!workstream_id) return res.status(400).json({ error: 'workstream_id required' });
