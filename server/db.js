@@ -44,6 +44,30 @@ if (IS_POSTGRES) {
       await _pgPool.query(sql);
     }
     console.log('PostgreSQL tables created/verified');
+
+    // Migrations: add columns to existing tables
+    const pgMigrations = [
+      'ALTER TABLE articles ADD COLUMN IF NOT EXISTS cl_internal_quotes TEXT',
+      'ALTER TABLE articles ADD COLUMN IF NOT EXISTS cl_sentiment_rationale TEXT',
+      'ALTER TABLE articles ADD COLUMN IF NOT EXISTS cl_firms_mentioned TEXT',
+      'ALTER TABLE articles ADD COLUMN IF NOT EXISTS cl_firm_sentiments TEXT',
+      'ALTER TABLE articles ADD COLUMN IF NOT EXISTS cl_institutional_investors TEXT',
+      'ALTER TABLE articles ADD COLUMN IF NOT EXISTS cl_institutional_investor_quotes TEXT',
+      'ALTER TABLE articles ADD COLUMN IF NOT EXISTS cl_external_quotes TEXT',
+      'ALTER TABLE articles ADD COLUMN IF NOT EXISTS cl_key_takeaway TEXT',
+      'ALTER TABLE articles ADD COLUMN IF NOT EXISTS internal_notes TEXT',
+      'ALTER TABLE articles ADD COLUMN IF NOT EXISTS internal_flags TEXT',
+      'ALTER TABLE articles ADD COLUMN IF NOT EXISTS internal_tags TEXT',
+      'ALTER TABLE articles ADD COLUMN IF NOT EXISTS annotated_at TIMESTAMPTZ',
+      'ALTER TABLE articles ADD COLUMN IF NOT EXISTS annotated_by TEXT',
+      'ALTER TABLE workstreams ADD COLUMN IF NOT EXISTS strategic_context TEXT DEFAULT \'\'',
+      'ALTER TABLE reporter_statuses ADD COLUMN IF NOT EXISTS engagement_history TEXT DEFAULT \'[]\'',
+      'ALTER TABLE reporter_statuses ADD COLUMN IF NOT EXISTS last_contacted TEXT',
+    ];
+    for (const sql of pgMigrations) {
+      try { await _pgPool.query(sql); } catch {}
+    }
+    console.log('PostgreSQL migrations applied');
   } catch (e) {
     console.error('PostgreSQL schema error:', e.message);
   }
