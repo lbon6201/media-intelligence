@@ -15,9 +15,8 @@ const ROLE_LABELS = {
 };
 
 function stanceColor(s) {
-  if (s === 'positive' || s === 'bullish' || s === 'supportive') return 'bg-emerald-100 text-emerald-700';
-  if (s === 'negative' || s === 'bearish') return 'bg-red-100 text-red-700';
-  if (s === 'cautious' || s === 'defensive') return 'bg-amber-100 text-amber-700';
+  if (s === 'positive') return 'bg-emerald-100 text-emerald-700';
+  if (s === 'negative') return 'bg-red-100 text-red-700';
   return 'bg-slate-100 text-slate-600';
 }
 
@@ -65,8 +64,8 @@ export default function QuotesTab({ workstream }) {
   const stanceCounts = { positive: 0, neutral: 0, negative: 0 };
   quotes.forEach(q => {
     const s = (q.stance || '').toLowerCase();
-    if (s === 'positive' || s === 'bullish' || s === 'supportive') stanceCounts.positive++;
-    else if (s === 'negative' || s === 'bearish') stanceCounts.negative++;
+    if (s === 'positive') stanceCounts.positive++;
+    else if (s === 'negative') stanceCounts.negative++;
     else stanceCounts.neutral++;
   });
 
@@ -136,9 +135,9 @@ export default function QuotesTab({ workstream }) {
         </select>
         <select value={filters.stance} onChange={e => setFilters({ ...filters, stance: e.target.value })}>
           <option value="">All Stances</option>
-          <option value="positive">Positive / Bullish</option>
+          <option value="positive">Positive</option>
           <option value="neutral">Neutral</option>
-          <option value="negative">Negative / Bearish</option>
+          <option value="negative">Negative</option>
         </select>
         {(filters.search || filters.type || filters.stance || filters.role) && (
           <button onClick={() => setFilters({ type: '', stance: '', search: '', role: '' })} className="text-xs" style={{ color: 'var(--accent)' }}>Clear</button>
@@ -196,7 +195,7 @@ export default function QuotesTab({ workstream }) {
             <tbody>
               {speakers.map(s => {
                 const total = s.total;
-                const pos = (s.stances.positive || 0) + (s.stances.bullish || 0) + (s.stances.supportive || 0);
+                const pos = (s.stances.positive || 0);
                 const neg = (s.stances.negative || 0) + (s.stances.bearish || 0);
                 const neu = total - pos - neg;
                 const isExpanded = expandedSpeaker === s.name;

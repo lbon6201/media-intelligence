@@ -76,22 +76,30 @@ router.post('/:workstream_id', async (req, res) => {
         );
 
         // Extract quotes into quotes table
+        // Normalize stance: merge bullish→positive, bearish→negative, cautious/defensive→neutral
+        const normStance = (s) => {
+          const l = (s || '').toLowerCase();
+          if (l === 'bullish' || l === 'supportive' || l === 'positive') return 'positive';
+          if (l === 'bearish' || l === 'negative') return 'negative';
+          return 'neutral';
+        };
+
         for (const q of (result.institutional_investor_quotes || [])) {
           if (q.quote && q.source) {
             await db.run(`INSERT INTO quotes (id, article_id, workstream_id, text, type, speaker, speaker_org, speaker_type, sentiment, stance, role, context) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              uuid(), article.id, article.workstream_id, q.quote, 'external', q.source, null, 'institutional_investor', null, q.stance || 'neutral', 'institutional_investor', null);
+              uuid(), article.id, article.workstream_id, q.quote, 'external', q.source, null, 'institutional_investor', null, normStance(q.stance), 'institutional_investor', null);
           }
         }
         for (const q of (result.internal_quotes || [])) {
           if (q.quote && q.source) {
             await db.run(`INSERT INTO quotes (id, article_id, workstream_id, text, type, speaker, speaker_org, speaker_type, sentiment, stance, role, context) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              uuid(), article.id, article.workstream_id, q.quote, 'internal', q.source, null, q.role || 'fund_executive', null, q.stance || 'neutral', q.role || 'fund_executive', null);
+              uuid(), article.id, article.workstream_id, q.quote, 'internal', q.source, null, q.role || 'fund_executive', null, normStance(q.stance), q.role || 'fund_executive', null);
           }
         }
         for (const q of (result.external_quotes || [])) {
           if (q.quote && q.source) {
             await db.run(`INSERT INTO quotes (id, article_id, workstream_id, text, type, speaker, speaker_org, speaker_type, sentiment, stance, role, context) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              uuid(), article.id, article.workstream_id, q.quote, 'external', q.source, null, q.role || 'other', null, q.stance || 'neutral', q.role || 'other', null);
+              uuid(), article.id, article.workstream_id, q.quote, 'external', q.source, null, q.role || 'other', null, normStance(q.stance), q.role || 'other', null);
           }
         }
 
