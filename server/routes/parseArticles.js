@@ -5,9 +5,18 @@ const router = Router();
 
 // Split raw text into article blocks using delimiters
 function splitBlocks(text) {
-  // Strategy 1: Factiva document IDs
-  if (/Document\s+[A-Za-z0-9]{10,}/g.test(text)) {
-    const parts = text.split(/Document\s+[A-Za-z0-9]{10,}/);
+  // Strategy 1: Factiva document IDs (e.g. "Document DJDN000020260326el3q0001j")
+  // The ID is typically 20+ alphanumeric chars on its own line, often at the end of each article
+  // Also match variations: "Document  WSJO00002..." (extra spaces), lowercase, etc.
+  const docIdPattern = /Document\s+[A-Za-z0-9_]{10,}/;
+  if (docIdPattern.test(text)) {
+    const parts = text.split(/Document\s+[A-Za-z0-9_]{10,}/);
+    if (parts.length > 1) return parts.filter(p => p.trim().length > 100);
+  }
+  // Also try: Factiva sometimes uses "an Document" prefix or just the ID pattern on its own line
+  const standaloneDocId = /^[A-Z]{2,6}\d{12,}/m;
+  if (standaloneDocId.test(text)) {
+    const parts = text.split(/^[A-Z]{2,6}\d{12,}[A-Za-z0-9]*/m);
     if (parts.length > 1) return parts.filter(p => p.trim().length > 100);
   }
   // Strategy 2: *** separators
