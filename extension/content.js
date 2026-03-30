@@ -22,20 +22,55 @@ function extractArticle() {
     || meta('og:title')
     || document.title;
 
-  // Author
-  const author = meta('author')
-    || meta('article:author')
-    || document.querySelector('[class*="byline"]')?.textContent?.trim()
-    || document.querySelector('[class*="author"]')?.textContent?.trim()
-    || document.querySelector('[rel="author"]')?.textContent?.trim()
-    || null;
+  // Author — try clean sources first, then parse from byline
+  let author = meta('author')
+    || meta('article:author');
 
-  // Date
-  const publishDate = meta('article:published_time')
+  if (!author) {
+    // Try dedicated author elements (not byline containers which mix author+date)
+    const authorEl = document.querySelector('[class*="author-name"]')
+      || document.querySelector('[class*="authorName"]')
+      || document.querySelector('[itemprop="author"] [itemprop="name"]')
+      || document.querySelector('[itemprop="author"]')
+      || document.querySelector('[rel="author"]')
+      || document.querySelector('.author-name')
+      || document.querySelector('.author');
+    if (authorEl) author = authorEl.textContent?.trim();
+  }
+
+  if (!author) {
+    // Parse from byline — extract just the name part
+    const bylineEl = document.querySelector('[class*="byline"]')
+      || document.querySelector('[class*="Byline"]');
+    if (bylineEl) {
+      author = parseAuthorFromByline(bylineEl.textContent);
+    }
+  }
+
+  // Date — try structured sources first
+  let publishDate = meta('article:published_time')
     || meta('og:article:published_time')
     || meta('date')
-    || document.querySelector('time[datetime]')?.getAttribute('datetime')
-    || null;
+    || meta('sailthru.date')
+    || meta('DC.date.issued');
+
+  if (!publishDate) {
+    const timeEl = document.querySelector('time[datetime]');
+    if (timeEl) publishDate = timeEl.getAttribute('datetime');
+  }
+
+  if (!publishDate) {
+    // Try to find date in byline or date-specific elements
+    const dateEl = document.querySelector('[class*="date"]')
+      || document.querySelector('[class*="Date"]')
+      || document.querySelector('[class*="timestamp"]')
+      || document.querySelector('[class*="Timestamp"]')
+      || document.querySelector('[class*="time"]');
+    if (dateEl) {
+      const dateText = dateEl.textContent?.trim();
+      publishDate = parseDateFromText(dateText);
+    }
+  }
 
   // Outlet
   const outlet = meta('og:site_name') || document.domain.replace(/^www\./, '');
@@ -43,7 +78,7 @@ function extractArticle() {
   // URL
   const url = window.location.href;
 
-  // Full text - find main content
+  // Full text
   const fullText = extractContent();
 
   return {
@@ -58,13 +93,63 @@ function extractArticle() {
   };
 }
 
+// Parse author name from a byline string that may contain date, outlet, etc.
+// e.g. "By John Smith | March 26, 2026" → "John Smith"
+// e.g. "John Smith, Reuters" → "John Smith"
+// e.g. "By John Smith and Jane Doe, Staff Reporters | Updated March 26" → "John Smith and Jane Doe"
+function parseAuthorFromByline(text) {
+  if (!text) return null;
+  let s = text.trim();
+
+  // Remove "By " prefix
+  s = s.replace(/^by\s+/i, '');
+
+  // Remove everything after common separators that introduce non-author info
+  s = s.replace(/\s*\|.*$/, '');           // "Name | Date"
+  s = s.replace(/\s*·.*$/, '');            // "Name · Date"
+  s = s.replace(/\s*—.*$/, '');            // "Name — Date"
+  s = s.replace(/\s*–.*$/, '');            // "Name – Date"
+
+  // Remove date patterns
+  s = s.replace(/\s*,?\s*(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[\s\d,.]+$/i, '');
+  s = s.replace(/\s*,?\s*\d{1,2}\/\d{1,2}\/\d{2,4}.*$/, '');
+  s = s.replace(/\s*,?\s*\d{4}-\d{2}-\d{2}.*$/, '');
+
+  // Remove job titles after comma
+  s = s.replace(/\s*,\s*(staff|reporter|correspondent|editor|columnist|senior|special|contributing|bureau|chief|deputy|managing|news|business|finance|economics|writer).*/i, '');
+
+  // Remove "for [outlet]"
+  s = s.replace(/\s+for\s+.+$/i, '');
+
+  // Remove outlet names after comma
+  s = s.replace(/\s*,\s*(Reuters|Bloomberg|AP|CNBC|BBC|Financial Times|WSJ|NYT).*$/i, '');
+
+  // Remove "Updated" / "Published" timestamps
+  s = s.replace(/\s*(Updated|Published|Posted|Modified).*$/i, '');
+
+  s = s.trim();
+  if (s.length < 2 || s.length > 80) return null;
+  if (s.split(/\s+/).length > 6) return null; // Too many words, probably not just a name
+  return s;
+}
+
+// Extract a date from a text string
+function parseDateFromText(text) {
+  if (!text) return null;
+  // Try to find date patterns
+  const m = text.match(/(\d{4}-\d{2}-\d{2})/)
+    || text.match(/((?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4})/i)
+    || text.match(/(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4})/i)
+    || text.match(/((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[.\s]+\d{1,2},?\s+\d{4})/i)
+    || text.match(/(\d{1,2}\/\d{1,2}\/\d{2,4})/);
+  return m ? m[1] : null;
+}
+
 function extractContent() {
-  // Remove noise elements
   const noise = ['nav', 'aside', 'footer', 'header', '[class*="related"]', '[class*="social"]',
     '[class*="share"]', '[class*="newsletter"]', '[class*="ad-"]', '[class*="sidebar"]',
     '[class*="comment"]', '[class*="promo"]', '[role="navigation"]', '[role="banner"]'];
 
-  // Try semantic containers first
   const containers = ['article', '[role="main"]', '.article-body', '.story-body',
     '#article-content', '.article-content', '.post-content', '.entry-content',
     '.article__body', '.story-content', 'main'];
@@ -79,12 +164,10 @@ function extractContent() {
     }
   }
 
-  // Fallback: find largest text block
   const paragraphs = [...document.querySelectorAll('p')];
   const text = paragraphs.map(p => p.textContent.trim()).filter(t => t.length > 40).join('\n\n');
   if (text.length > 200) return cleanText(text);
 
-  // Last resort
   return cleanText(document.body.textContent);
 }
 
@@ -100,10 +183,15 @@ function cleanText(text) {
 
 function cleanAuthor(author) {
   if (!author) return null;
-  return author.replace(/^by\s+/i, '').replace(/\s+/g, ' ').trim() || null;
+  let s = author.replace(/^by\s+/i, '').replace(/\s+/g, ' ').trim();
+  if (!s || s.length < 2) return null;
+  return s;
 }
 
 function normalizeDate(d) {
-  try { return new Date(d).toISOString().split('T')[0]; }
-  catch { return d; }
+  try {
+    const date = new Date(d);
+    if (isNaN(date)) return d;
+    return date.toISOString().split('T')[0];
+  } catch { return d; }
 }
