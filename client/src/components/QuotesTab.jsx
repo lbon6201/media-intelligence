@@ -248,27 +248,26 @@ export default function QuotesTab({ workstream }) {
                 </div>
                 <div className="space-y-1.5">
                   {catQuotes.map(q => (
-                    <div key={q.id} className="card p-3 flex gap-3 group">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm italic" style={{ color: 'var(--text-primary)' }}>"{q.text}"</p>
-                        <div className="flex items-center gap-2 mt-1.5">
+                    <div key={q.id} className="card p-3 group">
+                      {/* Quote text */}
+                      <p className="text-sm italic leading-relaxed" style={{ color: 'var(--text-primary)' }}>"{q.text}"</p>
+                      {/* Attribution row */}
+                      <div className="flex items-center justify-between mt-2 gap-3 flex-wrap">
+                        <div className="flex items-center gap-2">
                           <span className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>{q.speaker || 'Unknown'}</span>
                           {q.role && <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{ROLE_LABELS[q.role] || q.role}</span>}
                           <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${stanceColor(q.stance)}`}>{q.stance}</span>
                         </div>
-                      </div>
-                      <div className="flex flex-col items-end justify-between flex-shrink-0" style={{ maxWidth: 200 }}>
-                        <div className="text-right">
-                          <p className="text-xs truncate" style={{ color: 'var(--text-secondary)' }}>{q.article_headline}</p>
-                          <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{q.article_outlet} · {q.article_date}</p>
-                        </div>
-                        <div className="flex gap-1 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button onClick={() => handleCopy(q)} className="text-[10px] px-1.5 py-0.5 rounded" style={{ color: copied === q.id ? 'var(--status-approved)' : 'var(--accent)', background: 'var(--bg-content)' }}>
-                            {copied === q.id ? 'Copied!' : 'Copy'}
-                          </button>
-                          <button onClick={() => handleFlag(q.id)} className="text-[10px] px-1.5 py-0.5 rounded" style={{ color: 'var(--status-rejected)', background: 'var(--bg-content)' }} title="Mark as not relevant">
-                            Not relevant
-                          </button>
+                        <div className="flex items-center gap-3">
+                          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{q.article_outlet} · {q.article_date}</span>
+                          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button onClick={() => handleCopy(q)} className="text-[10px] px-1.5 py-0.5 rounded" style={{ color: copied === q.id ? 'var(--status-approved)' : 'var(--accent)', background: 'var(--bg-content)' }}>
+                              {copied === q.id ? 'Copied!' : 'Copy'}
+                            </button>
+                            <button onClick={() => handleFlag(q.id)} className="text-[10px] px-1.5 py-0.5 rounded" style={{ color: 'var(--status-rejected)', background: 'var(--bg-content)' }} title="Mark as not relevant">
+                              Not relevant
+                            </button>
+                          </div>
                         </div>
                       </div>
                     </div>
