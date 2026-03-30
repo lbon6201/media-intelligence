@@ -53,6 +53,10 @@ export const api = {
     return request(`/quotes?${new URLSearchParams(filtered)}`);
   },
   getSpeakers: (workstreamId) => request(`/quotes/speakers?workstream_id=${workstreamId}`),
+  flagQuote: (id) => request(`/quotes/${id}/flag`, { method: 'POST' }),
+  unflagQuote: (id) => request(`/quotes/${id}/unflag`, { method: 'POST' }),
+  startQuoteExtraction: (workstreamId) => request(`/extract-quotes/${workstreamId}`, { method: 'POST' }),
+  getQuoteExtractionProgress: (workstreamId) => request(`/extract-quotes/${workstreamId}/progress`),
 
   // Reporters
   getReporters: (workstreamId, sortBy) => request(`/reporters?workstream_id=${workstreamId}${sortBy ? '&sort_by=' + sortBy : ''}`),

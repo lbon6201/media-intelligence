@@ -3,6 +3,22 @@ import db from '../db.js';
 
 const router = Router();
 
+// Flag quote as not relevant
+router.post('/:id/flag', async (req, res) => {
+  try {
+    await db.run('UPDATE quotes SET sentiment = ? WHERE id = ?', 'flagged_irrelevant', req.params.id);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Unflag quote
+router.post('/:id/unflag', async (req, res) => {
+  try {
+    await db.run('UPDATE quotes SET sentiment = NULL WHERE id = ?', req.params.id);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Normalize all existing stance labels
 router.post('/normalize-stances', async (req, res) => {
   try {
@@ -25,13 +41,19 @@ router.post('/normalize-stances', async (req, res) => {
 });
 
 router.get('/', async (req, res) => {
-  const { workstream_id, type, stance, search, role } = req.query;
+  const { workstream_id, type, stance, search, role, include_flagged } = req.query;
   if (!workstream_id) return res.status(400).json({ error: 'workstream_id required' });
 
   let sql = `SELECT q.*, a.headline as article_headline, a.outlet as article_outlet, a.publish_date as article_date
     FROM quotes q JOIN articles a ON q.article_id = a.id
     WHERE q.workstream_id = ?`;
   const params = [workstream_id];
+
+  // Exclude flagged quotes by default
+  if (include_flagged !== '1') {
+    sql += " AND (q.sentiment IS NULL OR q.sentiment != ?)";
+    params.push('flagged_irrelevant');
+  }
 
   if (type) { sql += ' AND q.type = ?'; params.push(type); }
   if (role) { sql += ' AND q.role = ?'; params.push(role); }

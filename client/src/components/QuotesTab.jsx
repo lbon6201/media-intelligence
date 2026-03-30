@@ -75,6 +75,34 @@ export default function QuotesTab({ workstream }) {
     setTimeout(() => setCopied(null), 2000);
   }
 
+  async function handleFlag(id) {
+    await api.flagQuote(id);
+    setQuotes(prev => prev.filter(q => q.id !== id));
+  }
+
+  const [extracting, setExtracting] = useState(false);
+  const [extractProgress, setExtractProgress] = useState(null);
+
+  async function handleReExtract() {
+    setExtracting(true);
+    try {
+      await api.startQuoteExtraction(workstream.id);
+      const poll = setInterval(async () => {
+        const p = await api.getQuoteExtractionProgress(workstream.id);
+        setExtractProgress(p);
+        if (!p.running) {
+          clearInterval(poll);
+          setExtracting(false);
+          setExtractProgress(null);
+          load();
+        }
+      }, 1500);
+    } catch (e) {
+      alert(e.message);
+      setExtracting(false);
+    }
+  }
+
   // Apply date filter client-side (quotes come with article_date)
   let filtered = quotes;
   if (filters.date_from) filtered = filtered.filter(q => (q.article_date || '') >= filters.date_from);
@@ -132,6 +160,9 @@ export default function QuotesTab({ workstream }) {
           </div>
         </div>
         <div className="flex gap-2">
+          <button onClick={handleReExtract} disabled={extracting} className="btn-secondary px-3 py-1.5 text-xs">
+            {extracting ? `Re-extracting... ${extractProgress ? `(${extractProgress.done}/${extractProgress.total})` : ''}` : 'Re-extract Quotes'}
+          </button>
           <button onClick={() => handleExportQuotes('xlsx')} disabled={totalQuotes === 0} className="btn-primary px-3 py-1.5 text-xs">Export Excel</button>
           <button onClick={() => handleExportQuotes('docx')} disabled={totalQuotes === 0} className="btn-secondary px-3 py-1.5 text-xs">Export Word</button>
         </div>
@@ -231,9 +262,14 @@ export default function QuotesTab({ workstream }) {
                           <p className="text-xs truncate" style={{ color: 'var(--text-secondary)' }}>{q.article_headline}</p>
                           <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{q.article_outlet} · {q.article_date}</p>
                         </div>
-                        <button onClick={() => handleCopy(q)} className="text-[10px] mt-1 opacity-0 group-hover:opacity-100 transition-opacity px-1.5 py-0.5 rounded" style={{ color: copied === q.id ? 'var(--status-approved)' : 'var(--accent)', background: 'var(--bg-content)' }}>
-                          {copied === q.id ? 'Copied!' : 'Copy'}
-                        </button>
+                        <div className="flex gap-1 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button onClick={() => handleCopy(q)} className="text-[10px] px-1.5 py-0.5 rounded" style={{ color: copied === q.id ? 'var(--status-approved)' : 'var(--accent)', background: 'var(--bg-content)' }}>
+                            {copied === q.id ? 'Copied!' : 'Copy'}
+                          </button>
+                          <button onClick={() => handleFlag(q.id)} className="text-[10px] px-1.5 py-0.5 rounded" style={{ color: 'var(--status-rejected)', background: 'var(--bg-content)' }} title="Mark as not relevant">
+                            Not relevant
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))}
