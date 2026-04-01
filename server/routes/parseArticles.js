@@ -160,18 +160,8 @@ router.post('/', async (req, res) => {
   for (let i = 0; i < blocks.length; i++) {
     const block = blocks[i].trim();
 
-    // Skip blocks that are too short to be articles
-    if (block.length < 50) {
-      errors.push({ index: i, error: 'Block too short' });
-      continue;
-    }
-
-    // Skip blocks that are mostly Factiva metadata (no substantial text)
-    const contentLines = block.split('\n').filter(l => l.trim().length > 20 && !isFactivaFieldCode(l.trim()));
-    if (contentLines.length < 2) {
-      errors.push({ index: i, error: 'No article content detected' });
-      continue;
-    }
+    // Only skip truly empty blocks
+    if (block.length < 20) continue;
 
     try {
       const metadata = await extractWithClaude(block);
@@ -182,10 +172,6 @@ router.post('/', async (req, res) => {
       }
 
       const body = extractBody(block, metadata);
-      if (body.length < 30) {
-        errors.push({ index: i, error: 'Article body too short' });
-        continue;
-      }
 
       articles.push({
         headline: metadata.headline,
