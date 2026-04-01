@@ -97,6 +97,34 @@ function extractBody(rawText, metadata) {
   return lines.slice(start).join('\n').trim() || rawText.trim();
 }
 
+// POST /api/articles/parse/debug — show what the splitter produces without calling Claude
+router.post('/debug', async (req, res) => {
+  const { raw_text } = req.body;
+  if (!raw_text) return res.status(400).json({ error: 'raw_text required' });
+
+  const hasDocIds = /^Document\s/im.test(raw_text);
+  const hasStars = /\*{3,}/.test(raw_text);
+  const hasDashes = /^\s*-{3,}\s*$/m.test(raw_text);
+
+  const blocks = splitBlocks(raw_text);
+  const blockSamples = blocks.slice(0, 5).map((b, i) => ({
+    index: i,
+    length: b.length,
+    first_200_chars: b.trim().slice(0, 200),
+    last_100_chars: b.trim().slice(-100),
+  }));
+
+  res.json({
+    input_length: raw_text.length,
+    has_document_ids: hasDocIds,
+    has_stars: hasStars,
+    has_dashes: hasDashes,
+    total_blocks: blocks.length,
+    blocks_over_20_chars: blocks.filter(b => b.trim().length > 20).length,
+    block_samples: blockSamples,
+  });
+});
+
 // POST /api/articles/parse — start parsing, return immediately with job ID
 router.post('/', async (req, res) => {
   const { raw_text, workstream_id } = req.body;
