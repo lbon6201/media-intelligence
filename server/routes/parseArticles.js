@@ -3,46 +3,37 @@ import db from '../db.js';
 
 const router = Router();
 
-// Split raw text into article blocks using delimiters
+// Split raw text into article blocks — simple and reliable
 function splitBlocks(text) {
-  // Detect Factiva format: look for characteristic field codes
-  const isFactiva = /^(HD|BY|WC|PD|SN|SC|LA|CY|LP|TD|RF|CO|IN|NS|RE|IPC|AN)\s*$/m.test(text)
-    || /Document\s+[A-Za-z0-9_]{10,}/i.test(text);
-
-  if (isFactiva) {
-    // Factiva: split on Document IDs (appear at END of each article)
-    const docIdSplit = text.split(/Document\s+[A-Za-z0-9_]{10,}/i);
-    if (docIdSplit.length > 2) {
-      console.log(`Factiva detected: split into ${docIdSplit.length} blocks via Document IDs`);
-      return docIdSplit.filter(p => p.trim().length > 50);
-    }
-
-    // Fallback: split on standalone doc IDs (no "Document" prefix)
-    const standaloneDocIdSplit = text.split(/^[A-Z]{2,6}\d{12,}[A-Za-z0-9]*/m);
-    if (standaloneDocIdSplit.length > 2) {
-      console.log(`Factiva detected: split into ${standaloneDocIdSplit.length} blocks via standalone IDs`);
-      return standaloneDocIdSplit.filter(p => p.trim().length > 50);
+  // Strategy 1: Lines starting with "Document" (Factiva doc IDs)
+  if (/^Document\s/im.test(text)) {
+    const parts = text.split(/^Document\s.*$/im);
+    const filtered = parts.filter(p => p.trim().length > 20);
+    if (filtered.length > 1) {
+      console.log(`Split on Document IDs: ${filtered.length} blocks`);
+      return filtered;
     }
   }
-
-  // Non-Factiva: use explicit delimiters only
-  // Strategy: *** separators
+  // Strategy 2: *** separators
   if (/\*{3,}/.test(text)) {
     const parts = text.split(/\*{3,}/);
-    if (parts.length > 1) return parts.filter(p => p.trim().length > 50);
+    const filtered = parts.filter(p => p.trim().length > 20);
+    if (filtered.length > 1) {
+      console.log(`Split on ***: ${filtered.length} blocks`);
+      return filtered;
+    }
   }
-  // Strategy: --- separators (on own line)
+  // Strategy 3: --- separators on own line
   if (/^\s*-{3,}\s*$/m.test(text)) {
     const parts = text.split(/^\s*-{3,}\s*$/m);
-    if (parts.length > 1) return parts.filter(p => p.trim().length > 50);
-  }
-  // Strategy: 4+ blank lines (more conservative than 3)
-  const blankSplit = text.split(/\n(?:\s*\n){4,}/);
-  if (blankSplit.length > 1) {
-    const filtered = blankSplit.filter(p => p.trim().length > 200);
-    if (filtered.length > 1) return filtered;
+    const filtered = parts.filter(p => p.trim().length > 20);
+    if (filtered.length > 1) {
+      console.log(`Split on ---: ${filtered.length} blocks`);
+      return filtered;
+    }
   }
   // Single block
+  console.log('No delimiter found, treating as single block');
   return [text];
 }
 
