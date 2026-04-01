@@ -385,11 +385,18 @@ router.get('/:workstream_id/articles-doc', async (req, res) => {
         page: { margin: { top: convertInchesToTwip(1), bottom: convertInchesToTwip(1), left: convertInchesToTwip(1), right: convertInchesToTwip(1) } },
       },
       footers: {
-        default: new Footer({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [
-          new TextRun({ children: [PageNumber.CURRENT], font: 'Arial', size: 16, color: '94A3B8' }),
-          new TextRun({ text: ' of ', font: 'Arial', size: 16, color: '94A3B8' }),
-          new TextRun({ children: [PageNumber.TOTAL_PAGES], font: 'Arial', size: 16, color: '94A3B8' }),
-        ]}]}),
+        default: new Footer({
+          children: [
+            new Paragraph({
+              alignment: AlignmentType.CENTER,
+              children: [
+                new TextRun({ children: [PageNumber.CURRENT], font: 'Arial', size: 16, color: '94A3B8' }),
+                new TextRun({ text: ' of ', font: 'Arial', size: 16, color: '94A3B8' }),
+                new TextRun({ children: [PageNumber.TOTAL_PAGES], font: 'Arial', size: 16, color: '94A3B8' }),
+              ],
+            }),
+          ],
+        }),
       },
       children,
     }],
