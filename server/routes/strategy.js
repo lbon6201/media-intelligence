@@ -181,7 +181,7 @@ router.post('/:workstream_id/chat', async (req, res) => {
   }
   let extraContext = '';
   if (specificArticles.length > 0) {
-    extraContext = '\n\nFULL TEXT OF REFERENCED ARTICLES:\n' + specificArticles.map(a => `--- ${a.headline} ---\n${(a.full_text || '').slice(0, 6000)}`).join('\n\n');
+    extraContext = '\n\nFULL TEXT OF REFERENCED ARTICLES:\n' + specificArticles.map(a => `--- ${a.headline} ---\n${(a.full_text || '').slice(0, 24000)}`).join('\n\n');
   }
 
   const systemPrompt = `You are a senior strategic communications advisor with deep expertise in media intelligence. You have access to the full media monitoring dataset for the "${ctx.ws.name}" workstream (${ctx.ws.client}).

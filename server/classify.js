@@ -62,7 +62,7 @@ function buildUserMessage(taxonomy, article) {
     `Date: ${article.publish_date || "Unknown"}`,
     `Author: ${article.author || "Unknown"}`,
     "",
-    article.full_text.slice(0, 6000),
+    article.full_text.slice(0, 24000),
   ].join("\n");
 }
 

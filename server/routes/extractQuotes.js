@@ -90,7 +90,7 @@ router.post('/:workstream_id', async (req, res) => {
           `Date: ${article.publish_date || 'Unknown'}`,
           `Author: ${article.author || 'Unknown'}`,
           '',
-          article.full_text.slice(0, 6000),
+          article.full_text.slice(0, 24000),
         ].join('\n');
 
         const apiRes = await fetch('https://api.anthropic.com/v1/messages', {
