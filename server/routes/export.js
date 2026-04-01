@@ -5,6 +5,61 @@ import { Document, Packer, Paragraph, TextRun, AlignmentType, HeadingLevel, Foot
 
 const router = Router();
 
+// Clean web page noise from article full text for export
+function cleanArticleText(text) {
+  if (!text) return '';
+  const noisePatterns = [
+    /^(home|menu|search|sign\s*in|log\s*in|subscribe|register|newsletter)\s*$/gim,
+    /^(share|tweet|email|print|save|bookmark|comment|follow\s+us)\s*$/gim,
+    /^(facebook|twitter|linkedin|instagram|youtube|tiktok|whatsapp|reddit)\s*$/gim,
+    /^(previous|next|related|more\s+from|recommended|trending|popular|most\s+read)\s*.*$/gim,
+    /^(advertisement|sponsored|promoted|ad)\s*$/gim,
+    /^(skip\s+to|jump\s+to|go\s+to|back\s+to)\s+.*$/gim,
+    /^(accept|reject|manage|customize)\s*(all\s*)?(cookies?)?\s*$/gim,
+    /^(continue\s+reading|read\s+more|show\s+more|load\s+more|see\s+all)\s*$/gim,
+    /^(sign\s+up|subscribe|get\s+access|unlock|premium|member).*$/gim,
+    /^(close|dismiss|got\s+it|no\s+thanks|maybe\s+later|not\s+now)\s*$/gim,
+    /^(photo|image|video|audio|graphic|chart|illustration|source)\s*:.*$/gim,
+    /^(getty|reuters|ap|afp|bloomberg)\s*(images?|photos?)?\s*$/gim,
+    /^\d+\s*(min|minute|hour|sec|second)s?\s*(read|ago|left)\s*$/gim,
+    /^(updated?|modified|edited)\s*:?\s*$/gim,
+    /^(tags?|topics?|categories?|section|filed\s+under)\s*:?\s*$/gim,
+    /^copyright\s.*$/gim,
+    /©.*$/gim,
+    /all\s+rights\s+reserved.*$/gim,
+    /terms\s+(of\s+)?(use|service).*$/gim,
+    /privacy\s+policy.*$/gim,
+    /cookie\s+(policy|preferences|settings).*$/gim,
+    /^\s*\|+\s*$/gm,
+    /^\s*-{3,}\s*$/gm,
+    /^\s*={3,}\s*$/gm,
+    /^\s*_{3,}\s*$/gm,
+    /^page\s+\d+\s+of\s+\d+\s*$/gim,
+    /^factiva\s*$/gim,
+    /^dow\s*jones.*$/gim,
+    /^document\s+[a-z0-9]{10,}\s*$/gim,
+    /^(se|hd|by|cr|pd|sn|sc|la|cy|lp|td|rf|co|in|ns|re|ipc)\s*$/gim,
+  ];
+
+  let cleaned = text;
+  for (const pattern of noisePatterns) {
+    cleaned = cleaned.replace(pattern, '');
+  }
+
+  // Remove lines that are very short (1-3 chars) — usually nav items
+  cleaned = cleaned.split('\n').filter(line => {
+    const t = line.trim();
+    if (!t) return true; // keep blank lines for paragraph breaks
+    if (t.length <= 3) return false;
+    return true;
+  }).join('\n');
+
+  // Collapse excessive blank lines
+  cleaned = cleaned.replace(/\n{4,}/g, '\n\n\n');
+
+  return cleaned.trim();
+}
+
 function safeParseJson(str) {
   if (!str) return null;
   try { return JSON.parse(str); } catch { return str; }
@@ -360,15 +415,15 @@ router.get('/:workstream_id/articles-doc', async (req, res) => {
       ]}));
     }
 
-    // Full article text
+    // Full article text — clean web noise before export
     children.push(
       new Paragraph({ spacing: { before: 200, after: 100 }, children: [
         new TextRun({ text: 'Full Article Text', font: 'Arial', size: 20, bold: true, color: '0F172A' }),
       ]}),
     );
 
-    // Split full text into paragraphs
-    const textParagraphs = (a.full_text || '').split(/\n\s*\n/).filter(p => p.trim());
+    const cleanedText = cleanArticleText(a.full_text || '');
+    const textParagraphs = cleanedText.split(/\n\s*\n/).filter(p => p.trim());
     for (const para of textParagraphs) {
       children.push(
         new Paragraph({ spacing: { before: 80, after: 80 }, children: [

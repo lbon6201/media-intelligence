@@ -10,6 +10,8 @@ export default function ExportTab({ workstream }) {
   const [importResult, setImportResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const fileRef = useRef(null);
+  const [docFrom, setDocFrom] = useState('');
+  const [docTo, setDocTo] = useState('');
 
   // Quote export state — no default date range so all quotes included
   const [qStances, setQStances] = useState(new Set(ALL_STANCES));
@@ -200,14 +202,23 @@ export default function ExportTab({ workstream }) {
         </div>
 
         {/* Articles Word Doc */}
-        <div className="bg-white border border-[#b8cce0] rounded-lg p-5 flex items-center justify-between">
-          <div>
-            <h3 className="font-medium text-[#002855]">Articles Word Document</h3>
-            <p className="text-sm text-[#4a6080]">Full article text with classification data, sentiment, topics, key takeaways — formatted for print or sharing</p>
+        <div className="bg-white border border-[#b8cce0] rounded-lg p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="font-medium text-[#002855]">Articles Word Document</h3>
+              <p className="text-sm text-[#4a6080]">Full article text with classification data, sentiment, topics, key takeaways — formatted for print or sharing</p>
+            </div>
+            <button onClick={async () => { setLoading(true); try { await api.downloadArticlesDoc(workstream.id, { from: docFrom, to: docTo }); } catch (e) { alert(e.message); } finally { setLoading(false); } }} disabled={loading} className="bg-[#002855] text-white px-4 py-2 rounded text-sm hover:bg-[#0057b8] disabled:opacity-50 whitespace-nowrap">
+              Download Word
+            </button>
           </div>
-          <button onClick={async () => { setLoading(true); try { await api.downloadArticlesDoc(workstream.id); } catch (e) { alert(e.message); } finally { setLoading(false); } }} disabled={loading} className="bg-[#002855] text-white px-4 py-2 rounded text-sm hover:bg-[#0057b8] disabled:opacity-50 whitespace-nowrap">
-            Download Word
-          </button>
+          <div className="flex items-center gap-3">
+            <label className="text-xs text-[#4a6080]">Date range</label>
+            <input type="date" className="border border-[#b8cce0] rounded px-2 py-1.5 text-xs" value={docFrom} onChange={e => setDocFrom(e.target.value)} />
+            <span className="text-[#4a6080]">—</span>
+            <input type="date" className="border border-[#b8cce0] rounded px-2 py-1.5 text-xs" value={docTo} onChange={e => setDocTo(e.target.value)} />
+            {(docFrom || docTo) && <button onClick={() => { setDocFrom(''); setDocTo(''); }} className="text-xs" style={{ color: 'var(--accent)' }}>All dates</button>}
+          </div>
         </div>
 
         {/* JSON Backup */}
