@@ -23,71 +23,123 @@ function fingerprint(headline, outlet, date) {
   return hash.toString(16);
 }
 
-async function fetchAndExtract(url) {
-  await loadParsers();
+const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+// Try to extract article from HTML using Readability
+function parseHtml(html, pageUrl) {
+  const dom = new JSDOM(html, { url: pageUrl });
+  const reader = new Readability(dom.window.document);
+  const article = reader.parse();
+
+  if (!article || !article.textContent || article.textContent.trim().length < 100) return null;
+
+  let publishDate = article.publishedTime || null;
+  if (!publishDate) {
+    const doc = dom.window.document;
+    const dateMeta = doc.querySelector('meta[property="article:published_time"]')
+      || doc.querySelector('meta[name="date"]')
+      || doc.querySelector('meta[property="og:article:published_time"]')
+      || doc.querySelector('time[datetime]');
+    if (dateMeta) publishDate = dateMeta.getAttribute('content') || dateMeta.getAttribute('datetime');
+  }
+  if (publishDate) {
+    try { publishDate = new Date(publishDate).toISOString().split('T')[0]; } catch {}
+  }
+
+  let outlet = article.siteName || null;
+  if (!outlet) {
+    try { outlet = new URL(pageUrl).hostname.replace(/^www\./, ''); } catch {}
+  }
+  outlet = cleanOutletName(outlet) || outlet;
+
+  return {
+    headline: article.title || 'Untitled',
+    author: article.byline || null,
+    outlet,
+    publish_date: publishDate,
+    full_text: article.textContent.trim(),
+    word_count: article.textContent.trim().split(/\s+/).length,
+  };
+}
+
+// Check archive.ph for a cached version of the URL
+async function tryArchive(url) {
+  const archiveUrl = `https://archive.ph/newest/${url}`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
 
   try {
-    const res = await fetch(url, {
+    const res = await fetch(archiveUrl, {
       signal: controller.signal,
-      headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' },
+      headers: { 'User-Agent': UA },
       redirect: 'follow',
     });
 
-    if (res.status === 402 || res.status === 403) throw new Error('Paywall or access denied');
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) return null;
 
+    // archive.ph redirects to the cached page
     const html = await res.text();
+    if (!html || html.length < 500) return null;
 
-    // Detect paywall patterns
-    const lower = html.toLowerCase();
-    const paywallPatterns = ['subscribe to continue', 'sign in to read', 'premium content', 'subscribe for full access', 'create a free account'];
-    if (paywallPatterns.some(p => lower.includes(p)) && lower.indexOf('</article>') === -1) {
-      throw new Error('Paywall detected');
+    // Check we actually got an archived page (not a "not found" page)
+    if (html.includes('No results') || html.includes('Webpage not found')) return null;
+
+    const result = parseHtml(html, url);
+    if (result) {
+      result.source = 'archive.ph';
+      console.log(`Archive hit for: ${url}`);
     }
-
-    const dom = new JSDOM(html, { url });
-    const reader = new Readability(dom.window.document);
-    const article = reader.parse();
-
-    if (!article || !article.textContent || article.textContent.trim().length < 100) {
-      throw new Error('Could not extract content');
-    }
-
-    // Extract publish date from meta tags if Readability didn't get it
-    let publishDate = article.publishedTime || null;
-    if (!publishDate) {
-      const doc = dom.window.document;
-      const dateMeta = doc.querySelector('meta[property="article:published_time"]')
-        || doc.querySelector('meta[name="date"]')
-        || doc.querySelector('meta[property="og:article:published_time"]')
-        || doc.querySelector('time[datetime]');
-      if (dateMeta) publishDate = dateMeta.getAttribute('content') || dateMeta.getAttribute('datetime');
-    }
-    if (publishDate) {
-      try { publishDate = new Date(publishDate).toISOString().split('T')[0]; } catch {}
-    }
-
-    // Extract outlet
-    let outlet = article.siteName || null;
-    if (!outlet) {
-      try { outlet = new URL(url).hostname.replace(/^www\./, ''); } catch {}
-    }
-    outlet = cleanOutletName(outlet) || outlet;
-
-    return {
-      headline: article.title || 'Untitled',
-      author: article.byline || null,
-      outlet,
-      publish_date: publishDate,
-      full_text: article.textContent.trim(),
-      word_count: article.textContent.trim().split(/\s+/).length,
-      url,
-    };
+    return result;
+  } catch {
+    return null;
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function fetchAndExtract(url) {
+  await loadParsers();
+
+  // Step 1: Try the original URL directly
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: { 'User-Agent': UA },
+      redirect: 'follow',
+    });
+    clearTimeout(timeout);
+
+    if (res.ok) {
+      const html = await res.text();
+
+      // Check for paywall
+      const lower = html.toLowerCase();
+      const paywallPatterns = ['subscribe to continue', 'sign in to read', 'premium content', 'subscribe for full access', 'create a free account', 'you\'ve reached your limit', 'register for free', 'become a member'];
+      const hasPaywall = paywallPatterns.some(p => lower.includes(p)) && lower.indexOf('</article>') === -1;
+
+      if (!hasPaywall) {
+        const result = parseHtml(html, url);
+        if (result) {
+          return { ...result, url, source: 'direct' };
+        }
+      }
+      // If paywall or extraction failed, fall through to archive
+      console.log(`Direct extraction failed for ${url}, trying archive.ph...`);
+    }
+  } catch (e) {
+    console.log(`Direct fetch failed for ${url} (${e.message}), trying archive.ph...`);
+  }
+
+  // Step 2: Try archive.ph
+  const archived = await tryArchive(url);
+  if (archived) {
+    return { ...archived, url };
+  }
+
+  throw new Error('Could not extract content from URL or archive.ph');
 }
 
 router.post('/', async (req, res) => {
