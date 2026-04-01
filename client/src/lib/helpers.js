@@ -67,8 +67,11 @@ export function reporterStatusColor(status) {
 
 export function formatDate(d) {
   if (!d) return '';
-  try { return new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }); }
-  catch { return d; }
+  try {
+    // Append T12:00:00 to date-only strings to avoid timezone shift
+    const dateStr = d.length === 10 ? d + 'T12:00:00' : d;
+    return new Date(dateStr).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  } catch { return d; }
 }
 
 // Velocity
