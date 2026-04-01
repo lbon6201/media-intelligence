@@ -22,28 +22,40 @@ function extractArticle() {
     || meta('og:title')
     || document.title;
 
-  // Author — try clean sources first, then parse from byline
+  // Author — try multiple strategies, handle multiple authors and linked names
   let author = meta('author')
     || meta('article:author');
 
   if (!author) {
-    // Try dedicated author elements (not byline containers which mix author+date)
-    const authorEl = document.querySelector('[class*="author-name"]')
-      || document.querySelector('[class*="authorName"]')
-      || document.querySelector('[itemprop="author"] [itemprop="name"]')
-      || document.querySelector('[itemprop="author"]')
-      || document.querySelector('[rel="author"]')
-      || document.querySelector('.author-name')
-      || document.querySelector('.author');
-    if (authorEl) author = authorEl.textContent?.trim();
+    // Strategy 1: Multiple author elements (e.g. multiple [rel="author"] links)
+    const multiAuthorEls = document.querySelectorAll('[rel="author"], [class*="author-name"], [class*="authorName"], [itemprop="author"] [itemprop="name"]');
+    if (multiAuthorEls.length > 0) {
+      const names = [...multiAuthorEls].map(el => extractNameFromElement(el)).filter(Boolean);
+      const unique = [...new Set(names)];
+      if (unique.length > 0) author = unique.join(' and ');
+    }
   }
 
   if (!author) {
-    // Parse from byline — extract just the name part
+    // Strategy 2: Single author element
+    const authorEl = document.querySelector('[itemprop="author"]')
+      || document.querySelector('.author-name')
+      || document.querySelector('.author');
+    if (authorEl) author = extractNameFromElement(authorEl);
+  }
+
+  if (!author) {
+    // Strategy 3: Parse from byline container
     const bylineEl = document.querySelector('[class*="byline"]')
       || document.querySelector('[class*="Byline"]');
     if (bylineEl) {
-      author = parseAuthorFromByline(bylineEl.textContent);
+      // Check for multiple linked names inside the byline
+      const links = bylineEl.querySelectorAll('a');
+      if (links.length > 0) {
+        const names = [...links].map(a => extractNameFromElement(a)).filter(Boolean);
+        if (names.length > 0) author = names.join(' and ');
+      }
+      if (!author) author = parseAuthorFromByline(bylineEl.textContent);
     }
   }
 
@@ -91,6 +103,35 @@ function extractArticle() {
     word_count: fullText.split(/\s+/).filter(Boolean).length,
     source_type: 'extension',
   };
+}
+
+// Extract a clean name from an element, handling hyperlinks that may have slugs
+function extractNameFromElement(el) {
+  // Prefer the visible text
+  let name = el.textContent?.trim();
+  if (!name) return null;
+
+  // Check if the text looks like a URL slug (e.g. "john-smith" or "/author/john-smith")
+  if (/^[\w-]+$/.test(name) && name.includes('-') && !name.includes(' ')) {
+    // It's a slug — try to convert: "john-smith" → "John Smith"
+    name = name.replace(/^.*\//, '') // strip path prefix
+      .split('-')
+      .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(' ');
+  }
+
+  // If still looks like a URL path, skip it
+  if (name.startsWith('/') || name.startsWith('http') || name.includes('.com')) return null;
+
+  // Clean up
+  name = name.replace(/^by\s+/i, '').trim();
+
+  // Must look like a name (2-5 words, each starting with a capital after cleanup)
+  const words = name.split(/\s+/);
+  if (words.length < 1 || words.length > 6) return null;
+  if (name.length < 3 || name.length > 60) return null;
+
+  return name;
 }
 
 // Parse author name from a byline string that may contain date, outlet, etc.
