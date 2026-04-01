@@ -199,6 +199,17 @@ export default function ExportTab({ workstream }) {
           </button>
         </div>
 
+        {/* Articles Word Doc */}
+        <div className="bg-white border border-[#b8cce0] rounded-lg p-5 flex items-center justify-between">
+          <div>
+            <h3 className="font-medium text-[#002855]">Articles Word Document</h3>
+            <p className="text-sm text-[#4a6080]">Full article text with classification data, sentiment, topics, key takeaways — formatted for print or sharing</p>
+          </div>
+          <button onClick={async () => { setLoading(true); try { await api.downloadArticlesDoc(workstream.id); } catch (e) { alert(e.message); } finally { setLoading(false); } }} disabled={loading} className="bg-[#002855] text-white px-4 py-2 rounded text-sm hover:bg-[#0057b8] disabled:opacity-50 whitespace-nowrap">
+            Download Word
+          </button>
+        </div>
+
         {/* JSON Backup */}
         <div className="bg-white border border-[#b8cce0] rounded-lg p-5 flex items-center justify-between">
           <div>

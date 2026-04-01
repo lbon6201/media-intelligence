@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import db from '../db.js';
 import XLSX from 'xlsx';
+import { Document, Packer, Paragraph, TextRun, AlignmentType, HeadingLevel, Footer, PageNumber, convertInchesToTwip } from 'docx';
 
 const router = Router();
 
@@ -236,6 +237,169 @@ router.post('/import/json', async (req, res) => {
   });
 
   res.json({ success: true, imported });
+});
+
+// Export articles as formatted Word document with full text
+router.get('/:workstream_id/articles-doc', async (req, res) => {
+  const { status, topic, from, to } = req.query;
+  const wsId = req.params.workstream_id;
+
+  const ws = await db.get('SELECT * FROM workstreams WHERE id = ?', wsId);
+  if (!ws) return res.status(404).json({ error: 'Workstream not found' });
+
+  let sql = `SELECT * FROM articles WHERE workstream_id = ? AND cl_status IN ('classified', 'approved')`;
+  const params = [wsId];
+  if (status) { sql += ' AND cl_status = ?'; params.push(status); }
+  if (topic) { sql += ' AND cl_topics LIKE ?'; params.push(`%${topic}%`); }
+  if (from) { sql += ' AND publish_date >= ?'; params.push(from); }
+  if (to) { sql += ' AND publish_date <= ?'; params.push(to); }
+  sql += ' ORDER BY publish_date DESC';
+
+  const articles = await db.all(sql, ...params);
+  if (articles.length === 0) return res.status(400).json({ error: 'No articles found' });
+
+  const dateStr = new Date().toISOString().split('T')[0];
+  const children = [];
+
+  // Title page
+  children.push(
+    new Paragraph({ spacing: { before: 3000 }, alignment: AlignmentType.CENTER, children: [
+      new TextRun({ text: 'Media Coverage Report', font: 'Arial', size: 36, bold: true, color: '0F172A' }),
+    ]}),
+    new Paragraph({ spacing: { before: 400 }, alignment: AlignmentType.CENTER, children: [
+      new TextRun({ text: ws.name, font: 'Arial', size: 28, color: '2563EB' }),
+    ]}),
+    new Paragraph({ spacing: { before: 200 }, alignment: AlignmentType.CENTER, children: [
+      new TextRun({ text: `${articles.length} articles · Generated ${dateStr}`, font: 'Arial', size: 20, color: '94A3B8' }),
+    ]}),
+    new Paragraph({ spacing: { before: 200 }, alignment: AlignmentType.CENTER, children: [
+      new TextRun({ text: from && to ? `${from} to ${to}` : 'All dates', font: 'Arial', size: 20, color: '94A3B8' }),
+    ]}),
+    new Paragraph({ children: [] }), // spacer
+  );
+
+  // Table of contents
+  children.push(
+    new Paragraph({ heading: HeadingLevel.HEADING_1, spacing: { before: 600, after: 200 }, children: [
+      new TextRun({ text: 'Table of Contents', font: 'Arial', size: 28, bold: true, color: '0F172A' }),
+    ]}),
+  );
+  articles.forEach((a, i) => {
+    const topics = safeParseJson(a.cl_topics)?.join(', ') || '';
+    children.push(
+      new Paragraph({ spacing: { before: 60 }, children: [
+        new TextRun({ text: `${i + 1}. `, font: 'Arial', size: 20, color: '94A3B8' }),
+        new TextRun({ text: a.headline, font: 'Arial', size: 20, bold: true, color: '0F172A' }),
+        new TextRun({ text: `  ${a.outlet || ''} · ${a.publish_date || ''} · Sentiment: ${a.cl_sentiment_score || '?'}/7`, font: 'Arial', size: 18, color: '94A3B8' }),
+      ]}),
+    );
+  });
+
+  // Each article
+  articles.forEach((a, i) => {
+    const topics = safeParseJson(a.cl_topics) || [];
+    const entities = safeParseJson(a.cl_key_entities) || [];
+    const firmSents = safeParseJson(a.cl_firm_sentiments) || {};
+
+    // Article header
+    children.push(
+      new Paragraph({ spacing: { before: 800 }, children: [
+        new TextRun({ text: '─'.repeat(60), font: 'Arial', size: 16, color: 'E2E8F0' }),
+      ]}),
+      new Paragraph({ heading: HeadingLevel.HEADING_1, spacing: { before: 200, after: 100 }, children: [
+        new TextRun({ text: `${i + 1}. ${a.headline}`, font: 'Arial', size: 26, bold: true, color: '0F172A' }),
+      ]}),
+    );
+
+    // Metadata line
+    const metaParts = [a.outlet, a.author, a.publish_date, a.word_count ? `${a.word_count} words` : null].filter(Boolean);
+    children.push(
+      new Paragraph({ spacing: { after: 60 }, children: [
+        new TextRun({ text: metaParts.join(' · '), font: 'Arial', size: 18, color: '475569' }),
+      ]}),
+    );
+    if (a.url) {
+      children.push(
+        new Paragraph({ spacing: { after: 60 }, children: [
+          new TextRun({ text: a.url, font: 'Arial', size: 16, color: '2563EB' }),
+        ]}),
+      );
+    }
+
+    // Classification summary
+    const sentLabel = { 1: 'Very Negative', 2: 'Negative', 3: 'Slightly Negative', 4: 'Neutral', 5: 'Slightly Positive', 6: 'Positive', 7: 'Very Positive' };
+    children.push(
+      new Paragraph({ spacing: { before: 120, after: 60 }, children: [
+        new TextRun({ text: 'Sentiment: ', font: 'Arial', size: 18, bold: true, color: '475569' }),
+        new TextRun({ text: `${a.cl_sentiment_score}/7 — ${sentLabel[a.cl_sentiment_score] || ''}`, font: 'Arial', size: 18, color: '0F172A' }),
+        ...(a.cl_relevance_tier ? [new TextRun({ text: `  |  Relevance: ${a.cl_relevance_tier}`, font: 'Arial', size: 18, color: '475569' })] : []),
+      ]}),
+    );
+    if (topics.length > 0) {
+      children.push(new Paragraph({ spacing: { after: 60 }, children: [
+        new TextRun({ text: 'Topics: ', font: 'Arial', size: 18, bold: true, color: '475569' }),
+        new TextRun({ text: topics.join(', '), font: 'Arial', size: 18, color: '0F172A' }),
+      ]}));
+    }
+    if (a.cl_key_takeaway) {
+      children.push(new Paragraph({ spacing: { after: 60 }, children: [
+        new TextRun({ text: 'Key Takeaway: ', font: 'Arial', size: 18, bold: true, color: '475569' }),
+        new TextRun({ text: a.cl_key_takeaway, font: 'Arial', size: 18, italics: true, color: '0F172A' }),
+      ]}));
+    }
+    if (a.cl_rationale) {
+      children.push(new Paragraph({ spacing: { after: 60 }, children: [
+        new TextRun({ text: 'Analysis: ', font: 'Arial', size: 18, bold: true, color: '475569' }),
+        new TextRun({ text: a.cl_rationale, font: 'Arial', size: 18, color: '475569' }),
+      ]}));
+    }
+    if (Object.keys(firmSents).length > 0) {
+      children.push(new Paragraph({ spacing: { after: 60 }, children: [
+        new TextRun({ text: 'Firm Sentiments: ', font: 'Arial', size: 18, bold: true, color: '475569' }),
+        new TextRun({ text: Object.entries(firmSents).map(([f, s]) => `${f}: ${s}/7`).join(', '), font: 'Arial', size: 18, color: '0F172A' }),
+      ]}));
+    }
+
+    // Full article text
+    children.push(
+      new Paragraph({ spacing: { before: 200, after: 100 }, children: [
+        new TextRun({ text: 'Full Article Text', font: 'Arial', size: 20, bold: true, color: '0F172A' }),
+      ]}),
+    );
+
+    // Split full text into paragraphs
+    const textParagraphs = (a.full_text || '').split(/\n\s*\n/).filter(p => p.trim());
+    for (const para of textParagraphs) {
+      children.push(
+        new Paragraph({ spacing: { before: 80, after: 80 }, children: [
+          new TextRun({ text: para.trim(), font: 'Arial', size: 20, color: '0F172A' }),
+        ]}),
+      );
+    }
+  });
+
+  const doc = new Document({
+    styles: { default: { document: { run: { font: 'Arial', size: 20 } } } },
+    sections: [{
+      properties: {
+        page: { margin: { top: convertInchesToTwip(1), bottom: convertInchesToTwip(1), left: convertInchesToTwip(1), right: convertInchesToTwip(1) } },
+      },
+      footers: {
+        default: new Footer({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [
+          new TextRun({ children: [PageNumber.CURRENT], font: 'Arial', size: 16, color: '94A3B8' }),
+          new TextRun({ text: ' of ', font: 'Arial', size: 16, color: '94A3B8' }),
+          new TextRun({ children: [PageNumber.TOTAL_PAGES], font: 'Arial', size: 16, color: '94A3B8' }),
+        ]}]}),
+      },
+      children,
+    }],
+  });
+
+  const wsName = ws.name.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_]/g, '');
+  const buf = await Packer.toBuffer(doc);
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+  res.setHeader('Content-Disposition', `attachment; filename=${wsName}_articles_${dateStr}.docx`);
+  res.send(buf);
 });
 
 export default router;

@@ -132,6 +132,16 @@ export const api = {
     a.href = url; a.download = 'media-intelligence-export.xlsx'; a.click();
     URL.revokeObjectURL(url);
   },
+  downloadArticlesDoc: async (workstreamId, params = {}) => {
+    const qs = new URLSearchParams(Object.fromEntries(Object.entries(params).filter(([, v]) => v != null && v !== ''))).toString();
+    const res = await fetch(`${BASE}/export/${workstreamId}/articles-doc?${qs}`, { headers: getAuthHeaders() });
+    if (!res.ok) throw new Error('Export failed');
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'articles-report.docx'; a.click();
+    URL.revokeObjectURL(url);
+  },
   exportJson: (workstreamId) => request(`/export/${workstreamId}/json`),
   importJson: (data) => request('/export/import/json', { method: 'POST', body: JSON.stringify(data) }),
   getQuoteExportCount: (workstreamId, params) => {
