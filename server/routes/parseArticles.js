@@ -4,11 +4,26 @@ import db from '../db.js';
 const router = Router();
 const parseProgress = {};
 
+// Pre-clean: remove Factiva page headers/footers that appear between pages
+function preClean(text) {
+  return text
+    .replace(/^Page\s+\d+\s+of\s+\d+\s*©.*$/gim, '')  // "Page 3 of 199 © 2026 Factiva..."
+    .replace(/^©\s*\d{4}\s*Factiva.*$/gim, '')
+    .replace(/^Factiva,?\s*Inc\.?\s*All rights reserved\.?\s*$/gim, '')
+    .replace(/\r\n/g, '\n');  // normalize line endings
+}
+
 // Split raw text into article blocks — simple and reliable
-function splitBlocks(text) {
+function splitBlocks(rawText) {
+  const text = preClean(rawText);
+
+  // Count Document ID lines to verify
+  const docIdMatches = text.match(/^Document\s+\S+/gim);
+  console.log(`Found ${docIdMatches?.length || 0} Document ID lines`);
+
   // Strategy 1: Lines starting with "Document" (Factiva doc IDs)
-  if (/^Document\s/im.test(text)) {
-    const parts = text.split(/^Document\s.*$/im);
+  if (docIdMatches && docIdMatches.length > 0) {
+    const parts = text.split(/^Document\s+\S+.*$/gim);
     const filtered = parts.filter(p => p.trim().length > 20);
     if (filtered.length > 1) {
       console.log(`Split on Document IDs: ${filtered.length} blocks`);
@@ -24,15 +39,7 @@ function splitBlocks(text) {
       return filtered;
     }
   }
-  // Strategy 3: --- separators on own line
-  if (/^\s*-{3,}\s*$/m.test(text)) {
-    const parts = text.split(/^\s*-{3,}\s*$/m);
-    const filtered = parts.filter(p => p.trim().length > 20);
-    if (filtered.length > 1) {
-      console.log(`Split on ---: ${filtered.length} blocks`);
-      return filtered;
-    }
-  }
+  // No more --- splitting — it was causing false splits on Factiva page separators
   // Single block
   console.log('No delimiter found, treating as single block');
   return [text];
