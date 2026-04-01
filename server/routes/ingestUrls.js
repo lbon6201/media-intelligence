@@ -75,9 +75,9 @@ async function tryArchive(url) {
   try {
     const res = await fetch(archiveUrl, { signal: controller.signal, headers: { 'User-Agent': UA }, redirect: 'follow' });
     clearTimeout(timeout);
-    if (!res.ok) return null;
+    // archive.ph may return 200, 301, or even 429 but still have content
     const html = await res.text();
-    if (!html || html.length < 500 || html.includes('No results') || html.includes('Webpage not found')) return null;
+    if (!html || html.length < 500 || html.includes('No results') || html.includes('Webpage not found') || html.includes('Checking your browser')) return null;
     const result = extractFromHtml(html, url);
     if (result) console.log(`Archive hit for: ${url}`);
     return result;
@@ -157,7 +157,7 @@ async function fetchAndExtract(url) {
     }
   } catch {}
 
-  throw new Error('Could not extract content from URL or archive.ph');
+  throw new Error('Blocked by site (403) and no archive.ph cache available. Use the Chrome extension to clip this article while logged in.');
 }
 
 router.post('/', async (req, res) => {
