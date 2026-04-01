@@ -19,15 +19,34 @@ export default function IngestTab({ workstream }) {
     setResult(null);
     try {
       const res = await api.parseArticles(rawText, workstream.id);
-      setPreview(res.articles.map(a => ({ ...a, fingerprint: fingerprint(a.headline, a.outlet, a.publish_date) })));
-      if (res.errors?.length > 0) {
-        setParseStatus(`Parsed ${res.articles.length} articles (${res.errors.length} blocks skipped)`);
+
+      if (res.async) {
+        // Large batch: poll for progress
+        setParseStatus(`Parsing ${res.total_blocks} blocks...`);
+        const poll = setInterval(async () => {
+          try {
+            const p = await api.getParseProgress(workstream.id);
+            setParseStatus(`Parsing... ${p.done}/${p.total} blocks (${p.articles.length} articles found)`);
+            if (!p.running) {
+              clearInterval(poll);
+              setPreview(p.articles.map(a => ({ ...a, fingerprint: fingerprint(a.headline, a.outlet, a.publish_date) })));
+              setParseStatus(`Parsed ${p.articles.length} articles from ${p.total} blocks${p.errors.length > 0 ? ` (${p.errors.length} skipped)` : ''}`);
+              setLoading(false);
+            }
+          } catch { clearInterval(poll); setLoading(false); }
+        }, 2000);
       } else {
-        setParseStatus(`Parsed ${res.articles.length} articles from ${res.total_blocks} blocks`);
+        // Small batch: already have results
+        setPreview(res.articles.map(a => ({ ...a, fingerprint: fingerprint(a.headline, a.outlet, a.publish_date) })));
+        if (res.errors?.length > 0) {
+          setParseStatus(`Parsed ${res.articles.length} articles (${res.errors.length} blocks skipped)`);
+        } else {
+          setParseStatus(`Parsed ${res.articles.length} articles from ${res.total_blocks} blocks`);
+        }
+        setLoading(false);
       }
     } catch (e) {
       setParseStatus('Parse error: ' + e.message);
-    } finally {
       setLoading(false);
     }
   }

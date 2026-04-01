@@ -32,6 +32,7 @@ export const api = {
 
   // Articles
   parseArticles: (raw_text, workstream_id) => request('/articles/parse', { method: 'POST', body: JSON.stringify({ raw_text, workstream_id }) }),
+  getParseProgress: (jobId) => request(`/articles/parse/progress?job_id=${jobId}`),
   getArticles: (params) => {
     const filtered = Object.fromEntries(Object.entries(params).filter(([, v]) => v != null && v !== ''));
     return request(`/articles?${new URLSearchParams(filtered)}`);
