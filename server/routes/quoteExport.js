@@ -38,74 +38,47 @@ function safeParseJson(str) {
 }
 
 async function gatherQuotes(wsId, { stances, types, roles, from, to }) {
-  const articles = await db.all(
-    'SELECT id, headline, outlet, author, publish_date, url, cl_institutional_investor_quotes, cl_external_quotes FROM articles WHERE workstream_id = ? AND cl_status IN (?, ?)',
-    wsId, 'classified', 'approved');
+  // Use the quotes table directly — it has normalized types and stances
+  let sql = `SELECT q.*, a.headline as article_headline, a.outlet as article_outlet, a.author as article_author, a.publish_date as article_date, a.url as article_url
+    FROM quotes q JOIN articles a ON q.article_id = a.id
+    WHERE q.workstream_id = ? AND (q.sentiment IS NULL OR q.sentiment != ?)`;
+  const params = [wsId, 'flagged_irrelevant'];
+
+  const rows = await db.all(sql, ...params);
 
   const stanceSet = new Set(stances);
   const typeSet = new Set(types);
   const roleSet = new Set(roles);
 
   const quotes = [];
-
-  for (const a of articles) {
+  for (const q of rows) {
     // Date filter
-    if (from && a.publish_date && a.publish_date < from) continue;
-    if (to && a.publish_date && a.publish_date > to) continue;
+    if (from && q.article_date && q.article_date < from) continue;
+    if (to && q.article_date && q.article_date > to) continue;
+    // Type filter
+    if (!typeSet.has(q.type)) continue;
+    // Stance filter
+    if (!stanceSet.has(q.stance || 'neutral')) continue;
+    // Role filter
+    const qRole = (q.role || 'other').toLowerCase();
+    if (!roleSet.has(qRole)) continue;
 
-    if (typeSet.has('institutional_investor') || typeSet.has('institutional')) {
-      const iiQuotes = safeParseJson(a.cl_institutional_investor_quotes);
-      for (const q of iiQuotes) {
-        if (!q.quote || !q.source) continue;
-        const unified = unifyStance(q.stance, 'institutional_investor');
-        if (!stanceSet.has(unified)) continue;
-        quotes.push({
-          date: a.publish_date,
-          headline: a.headline,
-          outlet: a.outlet,
-          reporter: a.author,
-          speaker: normName(q.source),
-          affiliation: q.institution || '',
-          role: 'Institutional Investor',
-          quote_type: 'Institutional Investor',
-          quote: q.quote,
-          stance: unified,
-          original_stance: q.stance,
-          url: a.url || '',
-          article_id: a.id,
-        });
-      }
-    }
-
-    if (typeSet.has('external')) {
-      const extQuotes = safeParseJson(a.cl_external_quotes);
-      for (const q of extQuotes) {
-        if (!q.quote || !q.source) continue;
-        const unified = unifyStance(q.stance, 'external');
-        if (!stanceSet.has(unified)) continue;
-        // Role filter
-        const qRole = (q.role || 'other').toLowerCase();
-        if (!roleSet.has(qRole)) continue;
-        quotes.push({
-          date: a.publish_date,
-          headline: a.headline,
-          outlet: a.outlet,
-          reporter: a.author,
-          speaker: normName(q.source),
-          affiliation: q.affiliation || '',
-          role: q.role || 'other',
-          quote_type: 'External',
-          quote: q.quote,
-          stance: unified,
-          original_stance: q.stance,
-          url: a.url || '',
-          article_id: a.id,
-        });
-      }
-    }
+    quotes.push({
+      date: q.article_date,
+      headline: q.article_headline,
+      outlet: q.article_outlet,
+      reporter: q.article_author,
+      speaker: normName(q.speaker || 'Unknown'),
+      affiliation: q.speaker_org || '',
+      role: q.role || 'other',
+      quote_type: q.type === 'internal' ? 'Internal' : 'External',
+      quote: q.text,
+      stance: q.stance || 'neutral',
+      url: q.article_url || '',
+      article_id: q.article_id,
+    });
   }
 
-  // Sort by date descending
   quotes.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   return quotes;
 }
@@ -151,8 +124,8 @@ router.get('/:workstream_id/quotes', async (req, res) => {
   if (!ws) return res.status(404).json({ error: 'Workstream not found' });
 
   const stances = parseFilterParam(stance, ['positive', 'neutral', 'negative']);
-  const types = parseFilterParam(type, ['external', 'institutional_investor', 'institutional']);
-  const roleList = parseFilterParam(roles, ['regulator', 'legislator', 'academic', 'rating_agency', 'trade_group', 'legal_expert', 'industry_executive', 'former_official', 'journalist', 'analyst', 'investor_advocate', 'politician', 'other']);
+  const types = parseFilterParam(type, ['external', 'internal']);
+  const roleList = parseFilterParam(roles, ['regulator', 'legislator', 'academic', 'rating_agency', 'legal_expert', 'former_official', 'journalist', 'analyst', 'investor_advocate', 'institutional_investor', 'fund_executive', 'portfolio_manager', 'spokesperson', 'trade_association', 'other']);
 
   const quotes = await gatherQuotes(workstream_id, { stances, types, roles: roleList, from, to });
   const speakerSummary = buildSpeakerSummary(quotes);
@@ -183,8 +156,8 @@ router.get('/:workstream_id/quotes/count', async (req, res) => {
   const { stance, type, roles, from, to } = req.query;
 
   const stances = parseFilterParam(stance, ['positive', 'neutral', 'negative']);
-  const types = parseFilterParam(type, ['external', 'institutional_investor', 'institutional']);
-  const roleList = parseFilterParam(roles, ['regulator', 'legislator', 'academic', 'rating_agency', 'trade_group', 'legal_expert', 'industry_executive', 'former_official', 'journalist', 'analyst', 'investor_advocate', 'politician', 'other']);
+  const types = parseFilterParam(type, ['external', 'internal']);
+  const roleList = parseFilterParam(roles, ['regulator', 'legislator', 'academic', 'rating_agency', 'legal_expert', 'former_official', 'journalist', 'analyst', 'investor_advocate', 'institutional_investor', 'fund_executive', 'portfolio_manager', 'spokesperson', 'trade_association', 'other']);
 
   const quotes = await gatherQuotes(workstream_id, { stances, types, roles: roleList, from, to });
   const speakers = new Set(quotes.map(q => q.speaker)).size;

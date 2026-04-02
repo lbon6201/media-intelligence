@@ -2,9 +2,15 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { api } from '../api';
 
 const ALL_STANCES = ['negative', 'neutral', 'positive'];
-const ALL_TYPES = ['external', 'institutional_investor'];
-const ALL_ROLES = ['regulator', 'academic', 'politician', 'rating_agency', 'trade_group', 'journalist', 'other'];
-const ROLE_LABELS = { regulator: 'Regulator', academic: 'Academic', politician: 'Politician', rating_agency: 'Rating Agency', trade_group: 'Trade Group', journalist: 'Journalist', other: 'Other' };
+const ALL_TYPES = ['external', 'internal'];
+const ALL_ROLES = ['regulator', 'legislator', 'academic', 'rating_agency', 'legal_expert', 'former_official', 'journalist', 'analyst', 'investor_advocate', 'institutional_investor', 'fund_executive', 'portfolio_manager', 'spokesperson', 'trade_association', 'other'];
+const ROLE_LABELS = {
+  regulator: 'Regulator', legislator: 'Legislator', academic: 'Academic', rating_agency: 'Rating Agency',
+  legal_expert: 'Legal Expert', former_official: 'Former Official', journalist: 'Journalist',
+  analyst: 'Analyst', investor_advocate: 'Investor Advocate', institutional_investor: 'Institutional Investor',
+  fund_executive: 'Fund Executive', portfolio_manager: 'Portfolio Manager', spokesperson: 'Spokesperson',
+  trade_association: 'Trade Association', other: 'Other',
+};
 
 export default function ExportTab({ workstream }) {
   const [importResult, setImportResult] = useState(null);
@@ -145,22 +151,22 @@ export default function ExportTab({ workstream }) {
 
         {/* Type checkboxes */}
         <div>
-          <label className="text-sm font-medium text-[#002855] block mb-1">Quote Type</label>
+          <label className="text-sm font-medium text-[#002855] block mb-1">Quote Category</label>
           <div className="flex gap-4">
             <label className="flex items-center gap-1.5 text-sm text-[#4a6080] cursor-pointer">
               <input type="checkbox" checked={qTypes.has('external')} onChange={() => toggleSet(qTypes, setQTypes, 'external')} className="rounded border-[#b8cce0]" />
               External
             </label>
             <label className="flex items-center gap-1.5 text-sm text-[#4a6080] cursor-pointer">
-              <input type="checkbox" checked={qTypes.has('institutional_investor')} onChange={() => toggleSet(qTypes, setQTypes, 'institutional_investor')} className="rounded border-[#b8cce0]" />
-              Institutional Investor
+              <input type="checkbox" checked={qTypes.has('internal')} onChange={() => toggleSet(qTypes, setQTypes, 'internal')} className="rounded border-[#b8cce0]" />
+              Internal
             </label>
           </div>
         </div>
 
         {/* Role checkboxes */}
         <div>
-          <label className="text-sm font-medium text-[#002855] block mb-1">Roles <span className="font-normal text-[#4a6080]">(external quotes only)</span></label>
+          <label className="text-sm font-medium text-[#002855] block mb-1">Roles</label>
           <div className="flex flex-wrap gap-3">
             {ALL_ROLES.map(r => (
               <label key={r} className="flex items-center gap-1.5 text-sm text-[#4a6080] cursor-pointer">

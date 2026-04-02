@@ -64,7 +64,9 @@ export default function QuotesTab({ workstream }) {
       if (filters.type) params.type = filters.type; else params.type = 'external,internal';
       if (filters.stance) params.stance = filters.stance; else params.stance = 'negative,neutral,positive';
       if (filters.search) params.search = filters.search;
-      if (filters.role) params.role = filters.role;
+      if (filters.role) params.roles = filters.role;
+      if (filters.date_from) params.from = filters.date_from;
+      if (filters.date_to) params.to = filters.date_to;
       await api.downloadQuoteExport(workstream.id, params);
     } catch (e) { alert('Export error: ' + e.message); }
   }
