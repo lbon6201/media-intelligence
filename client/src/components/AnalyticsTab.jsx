@@ -125,28 +125,32 @@ export default function AnalyticsTab({ workstream }) {
             <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Sentiment Distribution</h3>
             <div className="flex items-end gap-3" style={{ height: 200 }}>
               {sentDist.map((count, i) => {
-                const pct = maxSentDist > 0 ? (count / maxSentDist) * 100 : 0;
+                const barHeight = maxSentDist > 0 ? Math.max((count / maxSentDist) * 180, count > 0 ? 6 : 0) : 0;
                 return (
-                  <div key={i} className="flex-1 flex flex-col items-center group relative">
+                  <div key={i} className="flex-1 group relative" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center', height: '100%' }}>
                     {/* Tooltip */}
-                    <div className="absolute bottom-full mb-2 hidden group-hover:block z-10" style={{ width: 220 }}>
+                    <div className="absolute bottom-full mb-2 hidden group-hover:block z-10" style={{ width: 240, left: '50%', transform: 'translateX(-50%)' }}>
                       <div className="rounded-lg px-3 py-2 text-xs shadow-lg" style={{ background: 'var(--bg-primary)', color: 'var(--text-inverse)' }}>
                         <p className="font-semibold">{SENT_DESCRIPTIONS[i]}</p>
                         <p className="mt-1 font-mono">{count} article{count !== 1 ? 's' : ''} ({totalArticles > 0 ? Math.round((count / totalArticles) * 100) : 0}%)</p>
                       </div>
                     </div>
-                    {/* Bar */}
-                    <div className="w-full rounded-t cursor-pointer transition-all hover:opacity-80" style={{ height: `${Math.max(pct, count > 0 ? 3 : 0)}%`, backgroundColor: sentimentDot(i + 1) }} />
-                    {/* Label */}
-                    <div className="mt-2 text-center">
-                      <span className="text-xs font-bold font-mono" style={{ color: sentimentDot(i + 1) }}>{i + 1}</span>
-                      <span className="block text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>{count}</span>
-                    </div>
+                    {/* Bar — using pixel height */}
+                    <div className="w-full rounded-t cursor-pointer transition-all hover:opacity-80" style={{ height: barHeight, backgroundColor: sentimentDot(i + 1) }} />
                   </div>
                 );
               })}
             </div>
-            <div className="flex justify-between mt-2 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+            {/* Labels row */}
+            <div className="flex gap-3 mt-2">
+              {sentDist.map((count, i) => (
+                <div key={i} className="flex-1 text-center">
+                  <span className="text-xs font-bold font-mono" style={{ color: sentimentDot(i + 1) }}>{i + 1}</span>
+                  <span className="block text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>{count}</span>
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-between mt-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>
               <span>← Negative</span>
               <span>Neutral</span>
               <span>Positive →</span>
@@ -159,12 +163,12 @@ export default function AnalyticsTab({ workstream }) {
               <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Coverage Trend</h3>
               <div className="flex items-end gap-px" style={{ height: 160 }}>
                 {trendDays.map((d, i) => {
-                  const barH = (d.count / maxDayCount) * 100;
+                  const barHeight = Math.max((d.count / maxDayCount) * 140, 4);
                   const barColor = d.avgSent ? sentimentDot(Math.round(d.avgSent)) : '#94A3B8';
                   return (
-                    <div key={i} className="flex-1 flex flex-col items-center group relative" style={{ minWidth: 2 }}>
+                    <div key={i} className="flex-1 group relative" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center', height: '100%', minWidth: 2 }}>
                       {/* Tooltip */}
-                      <div className="absolute bottom-full mb-2 hidden group-hover:block z-10" style={{ width: 180 }}>
+                      <div className="absolute bottom-full mb-2 hidden group-hover:block z-10" style={{ width: 180, left: '50%', transform: 'translateX(-50%)' }}>
                         <div className="rounded-lg px-3 py-2 text-xs shadow-lg" style={{ background: 'var(--bg-primary)', color: 'var(--text-inverse)' }}>
                           <p className="font-semibold">{formatDate(d.date)}</p>
                           <p>{d.count} article{d.count !== 1 ? 's' : ''}</p>
@@ -172,7 +176,7 @@ export default function AnalyticsTab({ workstream }) {
                         </div>
                       </div>
                       {/* Bar colored by sentiment */}
-                      <div className="w-full rounded-t cursor-pointer transition-all hover:opacity-70" style={{ height: `${Math.max(barH, 2)}%`, backgroundColor: barColor }} />
+                      <div className="w-full rounded-t cursor-pointer transition-all hover:opacity-70" style={{ height: barHeight, backgroundColor: barColor }} />
                     </div>
                   );
                 })}
