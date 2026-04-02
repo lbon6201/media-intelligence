@@ -39,6 +39,29 @@ export default function AnalyticsTab({ workstream }) {
   const sentDist = [0, 0, 0, 0, 0, 0, 0];
   articles.forEach(a => { if (a.cl_sentiment_score >= 1 && a.cl_sentiment_score <= 7) sentDist[a.cl_sentiment_score - 1]++; });
   const maxSentDist = Math.max(...sentDist, 1);
+  const SENT_DESCRIPTIONS = [
+    '1 — Very Negative: Strongly critical, accusatory, fraud/systemic risk framing',
+    '2 — Negative: Clearly skeptical or damaging framing',
+    '3 — Slightly Negative: Cautionary, mildly critical, raises concerns',
+    '4 — Neutral: Balanced or purely factual',
+    '5 — Slightly Positive: Constructive, mildly favorable',
+    '6 — Positive: Favorable coverage, highlights strengths',
+    '7 — Very Positive: Strongly supportive or promotional',
+  ];
+
+  // Trend over time: group by date, compute daily avg sentiment + volume
+  const dailyData = {};
+  articles.forEach(a => {
+    const date = a.publish_date || 'unknown';
+    if (date === 'unknown') return;
+    if (!dailyData[date]) dailyData[date] = { date, count: 0, sentSum: 0, sentCount: 0 };
+    dailyData[date].count++;
+    if (a.cl_sentiment_score) { dailyData[date].sentSum += a.cl_sentiment_score; dailyData[date].sentCount++; }
+  });
+  const trendDays = Object.values(dailyData).sort((a, b) => a.date.localeCompare(b.date)).map(d => ({
+    ...d, avgSent: d.sentCount > 0 ? +(d.sentSum / d.sentCount).toFixed(1) : null,
+  }));
+  const maxDayCount = Math.max(...trendDays.map(d => d.count), 1);
 
   // Theme breakdown
   const themeEntries = Object.entries(themeCounts).sort((a, b) => b[1] - a[1]);
@@ -97,19 +120,70 @@ export default function AnalyticsTab({ workstream }) {
             <KPI label="Top Theme" value={topTheme} small />
           </div>
 
-          {/* Sentiment Distribution */}
-          <div className="bg-white border border-[#b8cce0] rounded-lg p-4">
-            <h3 className="text-sm font-semibold text-[#002855] mb-3">Sentiment Distribution</h3>
-            <div className="flex items-end gap-2 h-32">
-              {sentDist.map((count, i) => (
-                <div key={i} className="flex-1 flex flex-col items-center">
-                  <div className="w-full rounded-t" style={{ height: `${(count / maxSentDist) * 100}%`, backgroundColor: sentimentDot(i + 1), minHeight: count > 0 ? 4 : 0 }} />
-                  <span className="text-xs text-[#4a6080] mt-1">{i + 1}</span>
-                  <span className="text-xs text-[#4a6080]">{count}</span>
-                </div>
-              ))}
+          {/* Sentiment Distribution — larger, with hover tooltips */}
+          <div className="card p-4">
+            <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Sentiment Distribution</h3>
+            <div className="flex items-end gap-3" style={{ height: 200 }}>
+              {sentDist.map((count, i) => {
+                const pct = maxSentDist > 0 ? (count / maxSentDist) * 100 : 0;
+                return (
+                  <div key={i} className="flex-1 flex flex-col items-center group relative">
+                    {/* Tooltip */}
+                    <div className="absolute bottom-full mb-2 hidden group-hover:block z-10" style={{ width: 220 }}>
+                      <div className="rounded-lg px-3 py-2 text-xs shadow-lg" style={{ background: 'var(--bg-primary)', color: 'var(--text-inverse)' }}>
+                        <p className="font-semibold">{SENT_DESCRIPTIONS[i]}</p>
+                        <p className="mt-1 font-mono">{count} article{count !== 1 ? 's' : ''} ({totalArticles > 0 ? Math.round((count / totalArticles) * 100) : 0}%)</p>
+                      </div>
+                    </div>
+                    {/* Bar */}
+                    <div className="w-full rounded-t cursor-pointer transition-all hover:opacity-80" style={{ height: `${Math.max(pct, count > 0 ? 3 : 0)}%`, backgroundColor: sentimentDot(i + 1) }} />
+                    {/* Label */}
+                    <div className="mt-2 text-center">
+                      <span className="text-xs font-bold font-mono" style={{ color: sentimentDot(i + 1) }}>{i + 1}</span>
+                      <span className="block text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>{count}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex justify-between mt-2 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+              <span>← Negative</span>
+              <span>Neutral</span>
+              <span>Positive →</span>
             </div>
           </div>
+
+          {/* Trend Over Time — volume bars + sentiment line */}
+          {trendDays.length > 1 && (
+            <div className="card p-4">
+              <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Coverage Trend</h3>
+              <div className="flex items-end gap-px" style={{ height: 160 }}>
+                {trendDays.map((d, i) => {
+                  const barH = (d.count / maxDayCount) * 100;
+                  const barColor = d.avgSent ? sentimentDot(Math.round(d.avgSent)) : '#94A3B8';
+                  return (
+                    <div key={i} className="flex-1 flex flex-col items-center group relative" style={{ minWidth: 2 }}>
+                      {/* Tooltip */}
+                      <div className="absolute bottom-full mb-2 hidden group-hover:block z-10" style={{ width: 180 }}>
+                        <div className="rounded-lg px-3 py-2 text-xs shadow-lg" style={{ background: 'var(--bg-primary)', color: 'var(--text-inverse)' }}>
+                          <p className="font-semibold">{formatDate(d.date)}</p>
+                          <p>{d.count} article{d.count !== 1 ? 's' : ''}</p>
+                          {d.avgSent && <p>Avg sentiment: {d.avgSent}/7 — {sentimentLabel(Math.round(d.avgSent))}</p>}
+                        </div>
+                      </div>
+                      {/* Bar colored by sentiment */}
+                      <div className="w-full rounded-t cursor-pointer transition-all hover:opacity-70" style={{ height: `${Math.max(barH, 2)}%`, backgroundColor: barColor }} />
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="flex justify-between mt-2 text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
+                <span>{formatDate(trendDays[0]?.date)}</span>
+                <span>{trendDays.length} days · bars colored by avg sentiment</span>
+                <span>{formatDate(trendDays[trendDays.length - 1]?.date)}</span>
+              </div>
+            </div>
+          )}
 
           {/* Theme Breakdown */}
           <div className="bg-white border border-[#b8cce0] rounded-lg p-4">
