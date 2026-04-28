@@ -111,6 +111,58 @@ function cleanArticleText(text) {
   return cleaned.trim();
 }
 
+// Split cleaned text into proper paragraphs for Word doc output.
+// Handles both double-newline-separated text (Factiva) and single-newline text (URL ingest).
+function splitIntoParagraphs(text) {
+  if (!text) return [];
+
+  // If text has double newlines, use those as paragraph boundaries
+  const hasDoubleNewlines = /\n\s*\n/.test(text);
+  if (hasDoubleNewlines) {
+    return text.split(/\n\s*\n/).map(block => {
+      return block.trim()
+        .split('\n')
+        .map(l => l.trim())
+        .filter(l => l.length > 0)
+        .join(' ')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+    }).filter(p => p.length > 0);
+  }
+
+  // Single-newline text: each line that ends a sentence is a paragraph.
+  // Lines that don't end with sentence-ending punctuation get merged with the next line.
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  const paragraphs = [];
+  let current = '';
+
+  for (const line of lines) {
+    if (current) {
+      current += ' ' + line;
+    } else {
+      current = line;
+    }
+
+    // A line ends a paragraph if it ends with sentence-ending punctuation,
+    // or if it's a standalone short line that looks like a section header,
+    // or if the next line starts with a capital letter after sentence-ending punct.
+    const endsSentence = /[.!?"')\u201D]\s*$/.test(current);
+    const isLongEnough = current.length > 60;
+
+    if (endsSentence && isLongEnough) {
+      paragraphs.push(current.replace(/\s{2,}/g, ' ').trim());
+      current = '';
+    }
+  }
+
+  // Don't lose the last chunk
+  if (current.trim()) {
+    paragraphs.push(current.replace(/\s{2,}/g, ' ').trim());
+  }
+
+  return paragraphs.filter(p => p.length > 0);
+}
+
 // Call Claude Sonnet to generate summary + key narratives
 async function generateClipsSummary(articles, workstream, headerConfig) {
   const articleSummaries = articles.map((a, i) => {
@@ -348,17 +400,30 @@ function buildClipsDoc(articles, workstream, headerConfig, aiResult) {
     new TextRun({ text: 'Media Coverage: Full Articles ', font: FONT, size: SZ_HEADING, bold: true, color: CLR }),
   ]}));
 
-  for (const a of articles) {
+  for (let idx = 0; idx < articles.length; idx++) {
+    const a = articles[idx];
+
+    // *** separator between articles (not before the first one)
+    if (idx > 0) {
+      children.push(new Paragraph({ spacing: { before: 200, after: 200 }, children: [] }));
+      children.push(new Paragraph({
+        spacing: { before: 40, after: 40 },
+        alignment: AlignmentType.CENTER,
+        children: [new TextRun({ text: '***', font: FONT, size: SZ_BODY, bold: true, color: CLR })],
+      }));
+      children.push(new Paragraph({ spacing: { before: 200, after: 200 }, children: [] }));
+    }
+
     // Headline — bold, hyperlinked if URL available
     if (a.url) {
-      children.push(new Paragraph({ spacing: { before: 240, after: 20 }, children: [
+      children.push(new Paragraph({ spacing: { before: 120, after: 20 }, children: [
         new ExternalHyperlink({
           link: a.url,
           children: [new TextRun({ text: a.headline, font: FONT, size: SZ_ARTICLE_HEAD, bold: true, color: '0563C1', underline: {} })],
         }),
       ]}));
     } else {
-      children.push(new Paragraph({ spacing: { before: 240, after: 20 }, children: [
+      children.push(new Paragraph({ spacing: { before: 120, after: 20 }, children: [
         new TextRun({ text: a.headline, font: FONT, size: SZ_ARTICLE_HEAD, bold: true, color: CLR }),
       ]}));
     }
@@ -382,21 +447,12 @@ function buildClipsDoc(articles, workstream, headerConfig, aiResult) {
 
     // Full article text — cleaned and split into proper paragraphs
     const cleanedText = cleanArticleText(a.full_text || '');
-    // Split on double newlines (paragraph breaks), then flow each paragraph
-    const textParagraphs = cleanedText.split(/\n\s*\n/).filter(p => p.trim());
-    for (const para of textParagraphs) {
-      // Join lines within a paragraph into flowing text
-      const flowedText = para.trim()
-        .split('\n')
-        .map(l => l.trim())
-        .filter(l => l.length > 0)
-        .join(' ')
-        .replace(/\s{2,}/g, ' ')
-        .trim();
-      if (!flowedText || flowedText.length < 3) continue;
+    const paragraphs = splitIntoParagraphs(cleanedText);
+    for (const para of paragraphs) {
+      if (!para || para.length < 3) continue;
       children.push(new Paragraph({
         spacing: { before: 80, after: 80 },
-        children: [new TextRun({ text: flowedText, font: FONT, size: SZ_BODY, color: CLR })],
+        children: [new TextRun({ text: para, font: FONT, size: SZ_BODY, color: CLR })],
       }));
     }
   }
