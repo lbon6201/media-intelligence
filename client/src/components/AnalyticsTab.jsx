@@ -18,6 +18,20 @@ export default function AnalyticsTab({ workstream }) {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [sentimentDrilldown, setSentimentDrilldown] = useState(null);
+  const [datePreset, setDatePreset] = useState('all');
+
+  function applyPreset(preset) {
+    setDatePreset(preset);
+    if (preset === 'all') { setDateFrom(''); setDateTo(''); return; }
+    const now = new Date();
+    const to = now.toISOString().split('T')[0];
+    setDateTo(to);
+    if (preset === '7d') { now.setDate(now.getDate() - 7); }
+    else if (preset === '30d') { now.setDate(now.getDate() - 30); }
+    else if (preset === '90d') { now.setDate(now.getDate() - 90); }
+    else if (preset === 'ytd') { now.setMonth(0); now.setDate(1); }
+    setDateFrom(now.toISOString().split('T')[0]);
+  }
 
   const load = useCallback(async () => {
     const [arts, reps] = await Promise.all([
@@ -132,9 +146,24 @@ export default function AnalyticsTab({ workstream }) {
     return { volChange: oVol > 0 ? Math.round(((rVol - oVol) / oVol) * 100) : 0, rVol, oVol, sentChange: rAvg && oAvg ? +(rAvg - oAvg).toFixed(1) : null, rAvg, oAvg };
   }, [trendDays]);
 
-  // Outlet / Firm aggregation (use all articles, not filtered)
+  // Comparative period for KPIs
+  const prevPeriod = useMemo(() => {
+    if (!dateFrom) return null;
+    const from = new Date(dateFrom + 'T12:00:00');
+    const to = dateTo ? new Date(dateTo + 'T12:00:00') : new Date();
+    const days = Math.round((to - from) / 86400000) || 30;
+    const prevTo = new Date(from); prevTo.setDate(prevTo.getDate() - 1);
+    const prevFrom = new Date(prevTo); prevFrom.setDate(prevFrom.getDate() - days);
+    const prevArts = articles.filter(a => a.publish_date && a.publish_date >= prevFrom.toISOString().split('T')[0] && a.publish_date <= prevTo.toISOString().split('T')[0]);
+    const prevTotal = prevArts.length;
+    const prevAvg = prevTotal > 0 ? +(prevArts.reduce((s, a) => s + (a.cl_sentiment_score || 0), 0) / prevTotal).toFixed(1) : 0;
+    const prevNeg = prevTotal > 0 ? +((prevArts.filter(a => a.cl_sentiment_score && a.cl_sentiment_score <= 3).length / prevTotal) * 100).toFixed(0) : 0;
+    return { total: prevTotal, avg: prevAvg, neg: prevNeg };
+  }, [articles, dateFrom, dateTo]);
+
+  // Outlet / Firm aggregation (uses filtered articles)
   const outletMap = {};
-  articles.forEach(a => {
+  filteredArticles.forEach(a => {
     const o = a.outlet || 'Unknown';
     if (!outletMap[o]) outletMap[o] = { name: o, reporters: new Set(), count: 0, sentiments: [], themes: {} };
     outletMap[o].count++;
@@ -145,7 +174,7 @@ export default function AnalyticsTab({ workstream }) {
   const outlets = Object.values(outletMap).sort((a, b) => b.count - a.count);
 
   const firmMap = {};
-  articles.forEach(a => {
+  filteredArticles.forEach(a => {
     (a.cl_firms_mentioned || []).forEach(f => {
       if (!firmMap[f]) firmMap[f] = { name: f, count: 0, overallSents: [], firmSents: [] };
       firmMap[f].count++;
@@ -155,35 +184,58 @@ export default function AnalyticsTab({ workstream }) {
   });
   const firms = Object.values(firmMap).sort((a, b) => b.count - a.count);
 
+  // Tab badge counts (use filteredArticles)
+  const tabBadges = useMemo(() => ({
+    Dashboard: totalArticles,
+    Outlets: outlets.length,
+    Firms: firms.length,
+    Themes: themeEntries.length,
+    Reporters: reporters.length,
+  }), [totalArticles, outlets.length, firms.length, themeEntries.length, reporters.length]);
+
+  // Click-through: navigate to a tab, optionally with a search hint
+  function goTo(tab) { setSub(tab); }
+
   return (
-    <div className="space-y-5">
-      {/* Sub-tab bar */}
-      <div className="flex gap-1 overflow-x-auto pb-px border-b" style={{ borderColor: 'var(--border)' }}>
+    <div className="space-y-4">
+      {/* ─── GLOBAL FILTER BAR ─── */}
+      <div className="flex items-center gap-2 flex-wrap rounded-lg border p-2.5" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+        {/* Quick presets */}
+        <div className="flex rounded-md overflow-hidden border" style={{ borderColor: 'var(--border)' }}>
+          {[['7d', '7D'], ['30d', '30D'], ['90d', '90D'], ['ytd', 'YTD'], ['all', 'All']].map(([val, label]) => (
+            <button key={val} onClick={() => applyPreset(val)} className="px-2.5 py-1 text-xs font-medium transition-colors"
+              style={{ background: datePreset === val ? 'var(--accent)' : 'transparent', color: datePreset === val ? 'white' : 'var(--text-muted)' }}>{label}</button>
+          ))}
+        </div>
+        {/* Custom date range */}
+        <input type="date" className="border rounded px-2 py-1 text-xs" style={{ borderColor: 'var(--border)' }} value={dateFrom} onChange={e => { setDateFrom(e.target.value); setDatePreset(''); }} />
+        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>–</span>
+        <input type="date" className="border rounded px-2 py-1 text-xs" style={{ borderColor: 'var(--border)' }} value={dateTo} onChange={e => { setDateTo(e.target.value); setDatePreset(''); }} />
+        {/* Granularity */}
+        <div className="ml-auto flex rounded-md overflow-hidden border" style={{ borderColor: 'var(--border)' }}>
+          {['day', 'week', 'month'].map(v => (
+            <button key={v} onClick={() => setTimeGranularity(v)} className="px-2.5 py-1 text-xs capitalize transition-colors"
+              style={{ background: timeGranularity === v ? 'var(--accent)' : 'transparent', color: timeGranularity === v ? 'white' : 'var(--text-muted)' }}>{v}</button>
+          ))}
+        </div>
+        <span className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>{totalArticles} articles</span>
+      </div>
+
+      {/* ─── SUB-TAB BAR with badges ─── */}
+      <div className="flex gap-0.5 overflow-x-auto border-b" style={{ borderColor: 'var(--border)' }}>
         {SUBTABS.map(s => (
           <button key={s} onClick={() => setSub(s)}
-            className="px-3 py-2 text-sm font-medium whitespace-nowrap border-b-2 transition-colors"
+            className="px-3 py-2 text-xs font-medium whitespace-nowrap border-b-2 transition-colors flex items-center gap-1.5"
             style={{ borderColor: sub === s ? 'var(--accent)' : 'transparent', color: sub === s ? 'var(--accent)' : 'var(--text-muted)' }}>
             {s}
+            {tabBadges[s] != null && <span className="text-[9px] font-mono px-1 py-px rounded" style={{ background: sub === s ? 'var(--accent)' : 'var(--bg-content)', color: sub === s ? 'white' : 'var(--text-muted)' }}>{tabBadges[s]}</span>}
           </button>
         ))}
       </div>
 
       {/* ─── DASHBOARD ─── */}
       {sub === 'Dashboard' && (
-        <div className="space-y-5">
-          {/* Controls row */}
-          <div className="flex items-center gap-3 flex-wrap">
-            <input type="date" className="border rounded px-2.5 py-1.5 text-sm" style={{ borderColor: 'var(--border)' }} value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
-            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>to</span>
-            <input type="date" className="border rounded px-2.5 py-1.5 text-sm" style={{ borderColor: 'var(--border)' }} value={dateTo} onChange={e => setDateTo(e.target.value)} />
-            {(dateFrom || dateTo) && <button onClick={() => { setDateFrom(''); setDateTo(''); }} className="text-xs font-medium" style={{ color: 'var(--accent)' }}>Clear</button>}
-            <div className="ml-auto flex rounded-md overflow-hidden border" style={{ borderColor: 'var(--border)' }}>
-              {['day', 'week', 'month'].map(v => (
-                <button key={v} onClick={() => setTimeGranularity(v)} className="px-3 py-1.5 text-xs capitalize transition-colors"
-                  style={{ background: timeGranularity === v ? 'var(--accent)' : 'var(--bg-card)', color: timeGranularity === v ? 'white' : 'var(--text-muted)' }}>{v}</button>
-              ))}
-            </div>
-          </div>
+        <div className="space-y-4">
 
           {/* Alert banner */}
           {alertItems.length > 0 && (
@@ -193,14 +245,13 @@ export default function AnalyticsTab({ workstream }) {
             </div>
           )}
 
-          {/* KPI row + velocity */}
-          <div className="grid grid-cols-6 gap-3">
-            <Card label="Articles" value={totalArticles} />
-            <Card label="Avg Sentiment" value={avgSentiment} sub={sentimentLabel(Math.round(avgSentiment))} />
-            <Card label="Negative Share" value={`${negShare}%`} />
-            <Card label="Top Reporter" value={topReporter} small />
-            {velocity && <Card label="Volume Trend" value={`${velocity.volChange > 0 ? '+' : ''}${velocity.volChange}%`} sub={`${velocity.rVol.toFixed(1)}/${timeGranularity} vs ${velocity.oVol.toFixed(1)}`} valueColor={velocity.volChange > 20 ? '#DC2626' : velocity.volChange < -20 ? '#16A34A' : undefined} />}
-            {velocity?.sentChange != null && <Card label="Sentiment Shift" value={`${velocity.sentChange > 0 ? '+' : ''}${velocity.sentChange}`} sub={`${velocity.rAvg} vs ${velocity.oAvg}`} valueColor={velocity.sentChange > 0.3 ? '#16A34A' : velocity.sentChange < -0.3 ? '#DC2626' : undefined} />}
+          {/* KPI row with comparative deltas */}
+          <div className="grid grid-cols-5 gap-3">
+            <Card label="Articles" value={totalArticles} delta={prevPeriod ? totalArticles - prevPeriod.total : null} deltaLabel="vs prev" />
+            <Card label="Avg Sentiment" value={avgSentiment} sub={sentimentLabel(Math.round(avgSentiment))} delta={prevPeriod ? +(avgSentiment - prevPeriod.avg).toFixed(1) : null} deltaLabel="vs prev" invertDelta />
+            <Card label="Negative Share" value={`${negShare}%`} delta={prevPeriod ? negShare - prevPeriod.neg : null} deltaLabel="pp" />
+            <Card label="Top Reporter" value={topReporter} small clickable onClick={() => goTo('Reporters')} />
+            <Card label="Top Theme" value={topTheme} small clickable onClick={() => goTo('Themes')} />
           </div>
 
           {/* Two-column: Sentiment Distribution + Coverage Trend */}
@@ -290,10 +341,10 @@ export default function AnalyticsTab({ workstream }) {
           <div className="grid grid-cols-2 gap-4">
             <TrendChart title="Firm Sentiment" items={firms.slice(0, 5)} articles={filteredArticles} trendDays={trendDays}
               getKey={getTimeKey} getSent={(a, name) => (a.cl_firm_sentiments || {})[name] || a.cl_sentiment_score}
-              matchFn={(a, name) => (a.cl_firms_mentioned || []).includes(name)} />
+              matchFn={(a, name) => (a.cl_firms_mentioned || []).includes(name)} onLabelClick={() => goTo('Firms')} />
             <TrendChart title="Theme Sentiment" items={themeEntries.slice(0, 5).map(([t]) => ({ name: t }))} articles={filteredArticles} trendDays={trendDays}
               getKey={getTimeKey} getSent={(a) => a.cl_sentiment_score}
-              matchFn={(a, name) => (a.cl_topics || []).includes(name)} />
+              matchFn={(a, name) => (a.cl_topics || []).includes(name)} onLabelClick={() => goTo('Themes')} />
           </div>
 
           {/* Key Quotes */}
@@ -438,7 +489,7 @@ export default function AnalyticsTab({ workstream }) {
       {/* ─── THEMES ─── */}
       {sub === 'Themes' && <SortableTable
         data={themeEntries.map(([theme, count]) => {
-          const arts = articles.filter(a => (a.cl_topics || []).includes(theme));
+          const arts = filteredArticles.filter(a => (a.cl_topics || []).includes(theme));
           const avg = arts.length > 0 ? +(arts.reduce((s, a) => s + (a.cl_sentiment_score || 0), 0) / arts.length).toFixed(1) : null;
           return { name: theme, count, avg };
         })}
@@ -462,7 +513,7 @@ export default function AnalyticsTab({ workstream }) {
             </thead>
             <tbody>
               {outlets.slice(0, 15).map(o => {
-                const oa = articles.filter(a => (a.outlet || 'Unknown') === o.name);
+                const oa = filteredArticles.filter(a => (a.outlet || 'Unknown') === o.name);
                 return (
                   <tr key={o.name} className="border-t" style={{ borderColor: 'var(--border)' }}>
                     <td className="px-2 py-1.5 font-medium sticky left-0" style={{ color: 'var(--text-primary)', background: 'var(--bg-card)' }}>{o.name}</td>
@@ -507,17 +558,21 @@ export default function AnalyticsTab({ workstream }) {
 
 // ─── Shared components ───
 
-function Card({ label, value, sub, small, valueColor }) {
+function Card({ label, value, sub, small, valueColor, delta, deltaLabel, invertDelta, clickable, onClick }) {
+  const deltaColor = delta == null ? null : (invertDelta ? (delta > 0 ? '#16A34A' : delta < 0 ? '#DC2626' : null) : (delta > 0 ? '#DC2626' : delta < 0 ? '#16A34A' : null));
   return (
-    <div className="rounded-lg border p-3" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+    <div className={`rounded-lg border p-3 ${clickable ? 'cursor-pointer hover:shadow-sm transition-shadow' : ''}`} style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }} onClick={onClick}>
       <p className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: 'var(--text-muted)' }}>{label}</p>
-      <p className={`font-bold ${small ? 'text-sm truncate' : 'text-lg'}`} style={{ color: valueColor || 'var(--text-primary)' }}>{value}</p>
+      <div className="flex items-baseline gap-1.5">
+        <p className={`font-bold ${small ? 'text-sm truncate' : 'text-lg'}`} style={{ color: valueColor || 'var(--text-primary)' }}>{value}</p>
+        {delta != null && delta !== 0 && <span className="text-[10px] font-semibold" style={{ color: deltaColor }}>{delta > 0 ? '+' : ''}{delta}{deltaLabel ? ` ${deltaLabel}` : ''}</span>}
+      </div>
       {sub && <p className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{sub}</p>}
     </div>
   );
 }
 
-function TrendChart({ title, items, articles, trendDays, getKey, getSent, matchFn }) {
+function TrendChart({ title, items, articles, trendDays, getKey, getSent, matchFn, onLabelClick }) {
   const trends = items.map(item => {
     const name = item.name;
     const points = trendDays.map(d => {
@@ -554,7 +609,7 @@ function TrendChart({ title, items, articles, trendDays, getKey, getSent, matchF
       </div>
       <div className="flex gap-3 mt-2 flex-wrap">
         {trends.map((t, ti) => (
-          <span key={ti} className="text-[10px] flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
+          <span key={ti} className={`text-[10px] flex items-center gap-1 ${onLabelClick ? 'cursor-pointer hover:underline' : ''}`} style={{ color: 'var(--text-muted)' }} onClick={onLabelClick}>
             <span className="inline-block w-3 h-0.5 rounded" style={{ background: CHART_COLORS[ti % CHART_COLORS.length] }} />{t.name}
           </span>
         ))}
