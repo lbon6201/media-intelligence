@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import db from '../db.js';
+import { normalizeFirmList, normalizeFirmSentiments } from '../firmNorm.js';
 
 const router = Router();
 
@@ -32,12 +33,12 @@ router.get('/:workstream_id/comparison', async (req, res) => {
     const lowerName = entityName.toLowerCase();
     const matching = articles.filter(a => {
       const entities = safeJson(a.cl_key_entities) || [];
-      const firms = safeJson(a.cl_firms_mentioned) || [];
+      const firms = normalizeFirmList(safeJson(a.cl_firms_mentioned) || []);
       return [...entities, ...firms].some(e => e.toLowerCase().includes(lowerName) || lowerName.includes(e.toLowerCase()));
     });
 
     const sentiments = matching.map(a => a.cl_sentiment_score).filter(Boolean);
-    const firmSentiments = matching.map(a => { const fs = safeJson(a.cl_firm_sentiments) || {}; return Object.entries(fs).find(([k]) => k.toLowerCase().includes(lowerName))?.[1]; }).filter(Boolean);
+    const firmSentiments = matching.map(a => { const fs = normalizeFirmSentiments(safeJson(a.cl_firm_sentiments) || {}); return Object.entries(fs).find(([k]) => k.toLowerCase().includes(lowerName))?.[1]; }).filter(Boolean);
 
     // Weekly trend
     const weekBuckets = {};
@@ -101,7 +102,7 @@ router.get('/:workstream_id/entities', async (req, res) => {
   const entities = {};
   articles.forEach(a => {
     (safeJson(a.cl_key_entities) || []).forEach(e => entities[e] = (entities[e] || 0) + 1);
-    (safeJson(a.cl_firms_mentioned) || []).forEach(e => entities[e] = (entities[e] || 0) + 1);
+    (normalizeFirmList(safeJson(a.cl_firms_mentioned) || [])).forEach(e => entities[e] = (entities[e] || 0) + 1);
   });
   res.json(Object.entries(entities).sort((a, b) => b[1] - a[1]).map(([name, count]) => ({ name, count })));
 });
@@ -160,7 +161,7 @@ router.get('/:workstream_id/velocity', async (req, res) => {
   // Compute velocity per entity/topic
   const subjects = {};
   for (const a of articles) {
-    const keys = [...(safeJson(a.cl_topics) || []), ...(safeJson(a.cl_key_entities) || []), ...(safeJson(a.cl_firms_mentioned) || [])];
+    const keys = [...(safeJson(a.cl_topics) || []), ...(safeJson(a.cl_key_entities) || []), ...normalizeFirmList(safeJson(a.cl_firms_mentioned) || [])];
     for (const key of keys) {
       if (!subjects[key]) subjects[key] = { recent: [], older: [] };
       if (a.publish_date >= d7) subjects[key].recent.push(a.cl_sentiment_score);

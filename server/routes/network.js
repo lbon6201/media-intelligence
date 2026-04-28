@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import db from '../db.js';
+import { normalizeFirmList } from '../firmNorm.js';
 
 const router = Router();
 
@@ -25,7 +26,7 @@ router.get('/:workstream_id', async (req, res) => {
   for (const a of articles) {
     const reporter = a.author;
     const outlet = a.outlet;
-    const firms = safeJson(a.cl_firms_mentioned) || [];
+    const firms = normalizeFirmList(safeJson(a.cl_firms_mentioned) || []);
     const extQuotes = safeJson(a.cl_external_quotes) || [];
     const iiQuotes = safeJson(a.cl_institutional_investor_quotes) || [];
 

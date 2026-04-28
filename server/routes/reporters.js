@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import db from '../db.js';
+import { normalizeFirmList } from '../firmNorm.js';
 
 const router = Router();
 
@@ -32,8 +33,9 @@ router.get('/', async (req, res) => {
       if (a.cl_sentiment_score) { r.sentiment_sum += a.cl_sentiment_score; r.count++; }
       // Firms
       try {
-        const firms = typeof a.cl_firms_mentioned === 'string' ? JSON.parse(a.cl_firms_mentioned) : a.cl_firms_mentioned;
-        if (Array.isArray(firms)) for (const f of firms) r.firms[f] = (r.firms[f] || 0) + 1;
+        const rawFirms = typeof a.cl_firms_mentioned === 'string' ? JSON.parse(a.cl_firms_mentioned) : a.cl_firms_mentioned;
+        const firms = normalizeFirmList(Array.isArray(rawFirms) ? rawFirms : []);
+        for (const f of firms) r.firms[f] = (r.firms[f] || 0) + 1;
       } catch {}
       // Topics
       try {

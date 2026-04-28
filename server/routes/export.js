@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import db from '../db.js';
 import XLSX from 'xlsx';
+import { normalizeFirmList, normalizeFirmSentiments } from '../firmNorm.js';
 import { Document, Packer, Paragraph, TextRun, AlignmentType, HeadingLevel, Footer, PageNumber, convertInchesToTwip } from 'docx';
 
 const router = Router();
@@ -86,10 +87,10 @@ router.get('/:workstream_id/excel', async (req, res) => {
     'Sentiment Score': a.cl_sentiment_score,
     'Sentiment Label': a.cl_sentiment_label,
     'Sentiment Rationale': a.cl_sentiment_rationale,
-    'Firms Mentioned': safeParseJson(a.cl_firms_mentioned)?.join?.(', ') || '',
+    'Firms Mentioned': normalizeFirmList(safeParseJson(a.cl_firms_mentioned) || []).join(', '),
     'Firm Sentiments': (() => {
-      const fs = safeParseJson(a.cl_firm_sentiments);
-      return fs && typeof fs === 'object' ? Object.entries(fs).map(([k, v]) => `${k}: ${v}`).join(', ') : '';
+      const fs = normalizeFirmSentiments(safeParseJson(a.cl_firm_sentiments) || {});
+      return Object.entries(fs).map(([k, v]) => `${k}: ${v}`).join(', ');
     })(),
     Topics: safeParseJson(a.cl_topics)?.join?.(', ') || '',
     'Relevance Tier': a.cl_relevance_tier,
@@ -115,8 +116,8 @@ router.get('/:workstream_id/excel', async (req, res) => {
       const r = reporterMap[name];
       if (a.outlet) r.outlets.add(a.outlet);
       if (a.cl_sentiment_score) r.sentiments.push(a.cl_sentiment_score);
-      const firms = safeParseJson(a.cl_firms_mentioned);
-      if (Array.isArray(firms)) for (const f of firms) r.firms[f] = (r.firms[f] || 0) + 1;
+      const firms = normalizeFirmList(safeParseJson(a.cl_firms_mentioned) || []);
+      for (const f of firms) r.firms[f] = (r.firms[f] || 0) + 1;
       const topics = safeParseJson(a.cl_topics);
       if (Array.isArray(topics)) for (const t of topics) r.themes[t] = (r.themes[t] || 0) + 1;
     }
@@ -167,9 +168,9 @@ router.get('/:workstream_id/excel', async (req, res) => {
   // Aggregate firm data
   const firmMap = {};
   for (const a of articles) {
-    const firms = safeParseJson(a.cl_firms_mentioned);
-    const firmSentiments = safeParseJson(a.cl_firm_sentiments) || {};
-    if (!Array.isArray(firms)) continue;
+    const firms = normalizeFirmList(safeParseJson(a.cl_firms_mentioned) || []);
+    const firmSentiments = normalizeFirmSentiments(safeParseJson(a.cl_firm_sentiments) || {});
+    if (firms.length === 0) continue;
     for (const f of firms) {
       if (!firmMap[f]) firmMap[f] = { name: f, count: 0, overall_sentiments: [], firm_sentiments: [] };
       firmMap[f].count++;

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { v4 as uuid } from 'uuid';
 import db from '../db.js';
 import { cleanOutletName } from '../outletNorm.js';
+import { searchArticleUrl } from '../urlSearch.js';
 
 const router = Router();
 
@@ -83,6 +84,7 @@ router.post('/ingest', async (req, res) => {
   let ingested = 0;
   let duplicates = 0;
   const errors = [];
+  const needsUrl = []; // track articles inserted without a URL
 
   await db.transaction(async () => {
     for (const a of articles) {
@@ -93,19 +95,39 @@ router.post('/ingest', async (req, res) => {
       const dup = await db.get('SELECT id FROM articles WHERE fingerprint = ?', a.fingerprint);
       if (dup) { duplicates++; continue; }
       const normalizedOutlet = cleanOutletName(a.outlet) || a.outlet || null;
+      const articleId = uuid();
       await db.run(`INSERT INTO articles (id, workstream_id, source_type, headline, outlet, outlet_type, author, publish_date, url, full_text, word_count, fingerprint)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        uuid(), a.workstream_id, a.source_type || 'paste',
+        articleId, a.workstream_id, a.source_type || 'paste',
         a.headline, normalizedOutlet, a.outlet_type || null,
         a.author || null, a.publish_date || null, a.url || null,
         a.full_text, a.word_count || a.full_text.split(/\s+/).length,
         a.fingerprint
       );
       ingested++;
+      if (!a.url && a.headline) {
+        needsUrl.push({ id: articleId, headline: a.headline, outlet: normalizedOutlet });
+      }
     }
   });
 
-  res.json({ ingested, duplicates, errors });
+  // Search for URLs in the background for articles ingested without one (e.g. Factiva)
+  if (needsUrl.length > 0) {
+    console.log(`Searching for ${needsUrl.length} missing article URLs after ingest...`);
+    const urlSearchPromises = needsUrl.map(async ({ id, headline, outlet }) => {
+      const found = await searchArticleUrl(headline, outlet);
+      if (found) {
+        await db.run('UPDATE articles SET url = ? WHERE id = ?', found, id).catch(() => {});
+      }
+    });
+    // Fire-and-forget: don't block the ingest response
+    Promise.allSettled(urlSearchPromises).then(results => {
+      const fulfilled = results.filter(r => r.status === 'fulfilled').length;
+      console.log(`URL search complete: ${fulfilled}/${needsUrl.length} processed`);
+    });
+  }
+
+  res.json({ ingested, duplicates, errors, url_searches: needsUrl.length });
 });
 
 // Normalize all existing outlet names

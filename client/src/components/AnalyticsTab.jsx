@@ -9,6 +9,9 @@ export default function AnalyticsTab({ workstream }) {
   const [articles, setArticles] = useState([]);
   const [reporters, setReporters] = useState([]);
   const [reporterSort, setReporterSort] = useState('count');
+  const [outletSort, setOutletSort] = useState({ by: 'count', dir: 'desc' });
+  const [firmSort, setFirmSort] = useState({ by: 'count', dir: 'desc' });
+  const [themeSort, setThemeSort] = useState({ by: 'count', dir: 'desc' });
 
   const load = useCallback(async () => {
     const [arts, reps] = await Promise.all([
@@ -79,16 +82,16 @@ export default function AnalyticsTab({ workstream }) {
   });
   const outlets = Object.values(outletMap).sort((a, b) => b.count - a.count);
 
-  // Firm aggregation
+  // Firm aggregation (with client-side normalization for display)
   const firmMap = {};
   articles.forEach(a => {
-    const firms = a.cl_firms_mentioned || [];
-    const firmSents = a.cl_firm_sentiments || {};
-    firms.forEach(f => {
+    const rawFirms = a.cl_firms_mentioned || [];
+    const rawSents = a.cl_firm_sentiments || {};
+    rawFirms.forEach(f => {
       if (!firmMap[f]) firmMap[f] = { name: f, count: 0, overallSents: [], firmSents: [] };
       firmMap[f].count++;
       if (a.cl_sentiment_score) firmMap[f].overallSents.push(a.cl_sentiment_score);
-      if (firmSents[f]) firmMap[f].firmSents.push(firmSents[f]);
+      if (rawSents[f]) firmMap[f].firmSents.push(rawSents[f]);
     });
   });
   const firms = Object.values(firmMap).sort((a, b) => b.count - a.count);
@@ -209,7 +212,7 @@ export default function AnalyticsTab({ workstream }) {
           <div className="bg-white border border-[#b8cce0] rounded-lg p-4">
             <h3 className="text-sm font-semibold text-[#002855] mb-3">Recent Articles</h3>
             <div className="space-y-2">
-              {articles.slice(0, 10).map(a => (
+              {[...articles].sort((a, b) => (b.publish_date || '').localeCompare(a.publish_date || '')).slice(0, 10).map(a => (
                 <div key={a.id} className="flex items-center gap-3 text-xs">
                   {a.cl_sentiment_score && <span className={`font-bold w-6 text-center ${sentimentColor(a.cl_sentiment_score)}`}>{a.cl_sentiment_score}</span>}
                   <span className="text-[#002855] font-medium flex-1 truncate">{a.headline}</span>
@@ -237,20 +240,29 @@ export default function AnalyticsTab({ workstream }) {
         </div>
       )}
 
-      {sub === 'Outlets' && (
+      {sub === 'Outlets' && (() => {
+        const sortedOutlets = [...outlets].sort((a, b) => {
+          const avgA = a.sentiments.length > 0 ? a.sentiments.reduce((x, y) => x + y, 0) / a.sentiments.length : 0;
+          const avgB = b.sentiments.length > 0 ? b.sentiments.reduce((x, y) => x + y, 0) / b.sentiments.length : 0;
+          const vals = { name: [a.name.localeCompare(b.name), b.name.localeCompare(a.name)], count: [a.count - b.count, b.count - a.count], sentiment: [avgA - avgB, avgB - avgA], reporters: [a.reporters.size - b.reporters.size, b.reporters.size - a.reporters.size] };
+          const [asc, desc] = vals[outletSort.by] || vals.count;
+          return outletSort.dir === 'asc' ? asc : desc;
+        });
+        const toggleOutletSort = col => setOutletSort(prev => ({ by: col, dir: prev.by === col && prev.dir === 'desc' ? 'asc' : 'desc' }));
+        return (
         <div className="bg-white border border-[#b8cce0] rounded-lg overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-[#f0f5fb] border-b border-[#b8cce0]">
               <tr>
-                <th className="px-3 py-2 text-left font-medium text-[#4a6080]">Outlet</th>
-                <th className="px-3 py-2 text-left font-medium text-[#4a6080]">Articles</th>
-                <th className="px-3 py-2 text-left font-medium text-[#4a6080]">Avg Sentiment</th>
-                <th className="px-3 py-2 text-left font-medium text-[#4a6080]">Reporters</th>
+                <SortTh label="Outlet" col="name" sort={outletSort} onSort={toggleOutletSort} />
+                <SortTh label="Articles" col="count" sort={outletSort} onSort={toggleOutletSort} />
+                <SortTh label="Avg Sentiment" col="sentiment" sort={outletSort} onSort={toggleOutletSort} />
+                <SortTh label="Reporters" col="reporters" sort={outletSort} onSort={toggleOutletSort} />
                 <th className="px-3 py-2 text-left font-medium text-[#4a6080]">Top Themes</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#b8cce0]/30">
-              {outlets.map(o => {
+              {sortedOutlets.map(o => {
                 const avg = o.sentiments.length > 0 ? +(o.sentiments.reduce((a, b) => a + b, 0) / o.sentiments.length).toFixed(1) : null;
                 return (
                   <tr key={o.name}>
@@ -265,63 +277,82 @@ export default function AnalyticsTab({ workstream }) {
             </tbody>
           </table>
         </div>
-      )}
+        );
+      })()}
 
-      {sub === 'Firms' && (
+      {sub === 'Firms' && (() => {
+        const firmsWithAvg = firms.map(f => ({
+          ...f,
+          oAvg: f.overallSents.length > 0 ? +(f.overallSents.reduce((a, b) => a + b, 0) / f.overallSents.length).toFixed(1) : null,
+          fAvg: f.firmSents.length > 0 ? +(f.firmSents.reduce((a, b) => a + b, 0) / f.firmSents.length).toFixed(1) : null,
+        }));
+        const sortedFirms = [...firmsWithAvg].sort((a, b) => {
+          const vals = { name: [a.name.localeCompare(b.name), b.name.localeCompare(a.name)], count: [a.count - b.count, b.count - a.count], overall: [(a.oAvg || 0) - (b.oAvg || 0), (b.oAvg || 0) - (a.oAvg || 0)], firm: [(a.fAvg || 0) - (b.fAvg || 0), (b.fAvg || 0) - (a.fAvg || 0)] };
+          const [asc, desc] = vals[firmSort.by] || vals.count;
+          return firmSort.dir === 'asc' ? asc : desc;
+        });
+        const toggleFirmSort = col => setFirmSort(prev => ({ by: col, dir: prev.by === col && prev.dir === 'desc' ? 'asc' : 'desc' }));
+        return (
         <div className="bg-white border border-[#b8cce0] rounded-lg overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-[#f0f5fb] border-b border-[#b8cce0]">
               <tr>
-                <th className="px-3 py-2 text-left font-medium text-[#4a6080]">Firm</th>
-                <th className="px-3 py-2 text-left font-medium text-[#4a6080]">Articles</th>
-                <th className="px-3 py-2 text-left font-medium text-[#4a6080]">Overall Avg</th>
-                <th className="px-3 py-2 text-left font-medium text-[#4a6080]">Firm-Specific Avg</th>
+                <SortTh label="Firm" col="name" sort={firmSort} onSort={toggleFirmSort} />
+                <SortTh label="Articles" col="count" sort={firmSort} onSort={toggleFirmSort} />
+                <SortTh label="Overall Avg" col="overall" sort={firmSort} onSort={toggleFirmSort} />
+                <SortTh label="Firm-Specific Avg" col="firm" sort={firmSort} onSort={toggleFirmSort} />
               </tr>
             </thead>
             <tbody className="divide-y divide-[#b8cce0]/30">
-              {firms.map(f => {
-                const oAvg = f.overallSents.length > 0 ? +(f.overallSents.reduce((a, b) => a + b, 0) / f.overallSents.length).toFixed(1) : null;
-                const fAvg = f.firmSents.length > 0 ? +(f.firmSents.reduce((a, b) => a + b, 0) / f.firmSents.length).toFixed(1) : null;
-                return (
-                  <tr key={f.name}>
-                    <td className="px-3 py-2 font-medium text-[#002855]">{f.name}</td>
-                    <td className="px-3 py-2 text-[#4a6080]">{f.count}</td>
-                    <td className="px-3 py-2"><span className={sentimentColor(Math.round(oAvg))}>{oAvg}</span></td>
-                    <td className="px-3 py-2"><span className={sentimentColor(Math.round(fAvg))}>{fAvg || '—'}</span></td>
-                  </tr>
-                );
-              })}
+              {sortedFirms.map(f => (
+                <tr key={f.name}>
+                  <td className="px-3 py-2 font-medium text-[#002855]">{f.name}</td>
+                  <td className="px-3 py-2 text-[#4a6080]">{f.count}</td>
+                  <td className="px-3 py-2"><span className={sentimentColor(Math.round(f.oAvg))}>{f.oAvg}</span></td>
+                  <td className="px-3 py-2"><span className={sentimentColor(Math.round(f.fAvg))}>{f.fAvg || '—'}</span></td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
-      )}
+        );
+      })()}
 
-      {sub === 'Themes' && (
+      {sub === 'Themes' && (() => {
+        const themesWithAvg = themeEntries.map(([theme, count]) => {
+          const arts = articles.filter(a => (a.cl_topics || []).includes(theme));
+          const avg = arts.length > 0 ? +(arts.reduce((s, a) => s + (a.cl_sentiment_score || 0), 0) / arts.length).toFixed(1) : null;
+          return { theme, count, avg };
+        });
+        const sortedThemes = [...themesWithAvg].sort((a, b) => {
+          const vals = { name: [a.theme.localeCompare(b.theme), b.theme.localeCompare(a.theme)], count: [a.count - b.count, b.count - a.count], sentiment: [(a.avg || 0) - (b.avg || 0), (b.avg || 0) - (a.avg || 0)] };
+          const [asc, desc] = vals[themeSort.by] || vals.count;
+          return themeSort.dir === 'asc' ? asc : desc;
+        });
+        const toggleThemeSort = col => setThemeSort(prev => ({ by: col, dir: prev.by === col && prev.dir === 'desc' ? 'asc' : 'desc' }));
+        return (
         <div className="bg-white border border-[#b8cce0] rounded-lg overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-[#f0f5fb] border-b border-[#b8cce0]">
               <tr>
-                <th className="px-3 py-2 text-left font-medium text-[#4a6080]">Theme</th>
-                <th className="px-3 py-2 text-left font-medium text-[#4a6080]">Articles</th>
-                <th className="px-3 py-2 text-left font-medium text-[#4a6080]">Avg Sentiment</th>
+                <SortTh label="Theme" col="name" sort={themeSort} onSort={toggleThemeSort} />
+                <SortTh label="Articles" col="count" sort={themeSort} onSort={toggleThemeSort} />
+                <SortTh label="Avg Sentiment" col="sentiment" sort={themeSort} onSort={toggleThemeSort} />
               </tr>
             </thead>
             <tbody className="divide-y divide-[#b8cce0]/30">
-              {themeEntries.map(([theme, count]) => {
-                const arts = articles.filter(a => (a.cl_topics || []).includes(theme));
-                const avg = arts.length > 0 ? +(arts.reduce((s, a) => s + (a.cl_sentiment_score || 0), 0) / arts.length).toFixed(1) : null;
-                return (
-                  <tr key={theme}>
-                    <td className="px-3 py-2 font-medium text-[#002855]">{theme}</td>
-                    <td className="px-3 py-2 text-[#4a6080]">{count}</td>
-                    <td className="px-3 py-2"><span className={sentimentColor(Math.round(avg))}>{avg} — {sentimentLabel(Math.round(avg))}</span></td>
-                  </tr>
-                );
-              })}
+              {sortedThemes.map(t => (
+                <tr key={t.theme}>
+                  <td className="px-3 py-2 font-medium text-[#002855]">{t.theme}</td>
+                  <td className="px-3 py-2 text-[#4a6080]">{t.count}</td>
+                  <td className="px-3 py-2"><span className={sentimentColor(Math.round(t.avg))}>{t.avg} — {sentimentLabel(Math.round(t.avg))}</span></td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
-      )}
+        );
+      })()}
 
       {sub === 'Outlet × Firm' && (
         <div className="bg-white border border-[#b8cce0] rounded-lg overflow-x-auto">
@@ -662,5 +693,14 @@ function ComparisonView({ workstream }) {
         </>
       )}
     </div>
+  );
+}
+
+function SortTh({ label, col, sort, onSort }) {
+  const active = sort.by === col;
+  return (
+    <th className="px-3 py-2 text-left font-medium text-[#4a6080] cursor-pointer select-none hover:text-[#002855]" onClick={() => onSort(col)}>
+      {label} {active && (sort.dir === 'asc' ? '↑' : '↓')}
+    </th>
   );
 }
