@@ -3,17 +3,28 @@ import { api } from '../api';
 import { sentimentDot } from '../lib/helpers';
 
 export default function NetworkTab({ workstream }) {
-  const [data, setData] = useState(null);
+  const [rawData, setRawData] = useState(null);
   const [selected, setSelected] = useState(null);
   const [minWeight, setMinWeight] = useState(2);
+  const [minMentions, setMinMentions] = useState(2);
+  const [showTypes, setShowTypes] = useState({ reporter: true, outlet: true, firm: true, speaker: true });
   const svgRef = useRef(null);
 
   const load = useCallback(async () => {
     const d = await api.getNetwork(workstream.id, minWeight);
-    setData(d);
+    setRawData(d);
   }, [workstream.id, minWeight]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Filter nodes by min mentions and type
+  const data = rawData ? (() => {
+    const filteredNodeIds = new Set(rawData.nodes.filter(n => n.count >= minMentions && showTypes[n.type]).map(n => n.id));
+    return {
+      nodes: rawData.nodes.filter(n => filteredNodeIds.has(n.id)),
+      edges: rawData.edges.filter(e => filteredNodeIds.has(e.source) && filteredNodeIds.has(e.target)),
+    };
+  })() : null;
 
   // Simple force layout (no d3 dependency — basic physics simulation)
   const [positions, setPositions] = useState({});
@@ -76,18 +87,27 @@ export default function NetworkTab({ workstream }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-4 flex-wrap">
         <h2 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>Relationship Network</h2>
         <div className="flex items-center gap-2 text-xs" style={{ color: 'var(--text-secondary)' }}>
           <span>Min connections:</span>
-          <input type="range" min="1" max="5" value={minWeight} onChange={e => setMinWeight(+e.target.value)} className="w-24" />
-          <span className="font-mono">{minWeight}</span>
+          <input type="range" min="1" max="10" value={minWeight} onChange={e => setMinWeight(+e.target.value)} className="w-20" />
+          <span className="font-mono w-4">{minWeight}</span>
         </div>
-        <div className="flex gap-3 text-xs">
+        <div className="flex items-center gap-2 text-xs" style={{ color: 'var(--text-secondary)' }}>
+          <span>Min mentions:</span>
+          <input type="number" min="1" max="50" value={minMentions} onChange={e => setMinMentions(Math.max(1, parseInt(e.target.value) || 1))}
+            className="border rounded px-1.5 py-0.5 w-12 text-xs" style={{ borderColor: 'var(--border)' }} />
+        </div>
+        <div className="flex gap-2 text-xs">
           {Object.entries(nodeColors).map(([type, color]) => (
-            <span key={type} className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full" style={{ background: color }} />{type}</span>
+            <button key={type} onClick={() => setShowTypes(prev => ({ ...prev, [type]: !prev[type] }))}
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded" style={{ opacity: showTypes[type] ? 1 : 0.35, background: showTypes[type] ? `${color}15` : 'transparent' }}>
+              <span className="w-2.5 h-2.5 rounded-full" style={{ background: color }} />{type}
+            </button>
           ))}
         </div>
+        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{data?.nodes?.length || 0} nodes · {data?.edges?.length || 0} edges</span>
         {selected && <button onClick={() => setSelected(null)} className="text-xs" style={{ color: 'var(--accent)' }}>Clear selection</button>}
       </div>
 

@@ -786,7 +786,10 @@ function ReporterCard({ reporter: r, workstreamId, onUpdate }) {
 }
 
 function EngagementView({ reporters }) {
-  const scored = reporters.map(r => {
+  const [minArticles, setMinArticles] = useState(2);
+
+  const filtered = reporters.filter(r => r.article_count >= minArticles);
+  const scored = filtered.map(r => {
     const score = (7 - (r.avg_sentiment || 4)) * 3 + r.article_count * 0.5 + (r.trend === 'Declining' ? 2 : r.trend === 'Improving' ? -1 : 0);
     return { ...r, _score: score };
   }).sort((a, b) => b._score - a._score);
@@ -800,11 +803,49 @@ function EngagementView({ reporters }) {
 
   return (
     <div className="space-y-4">
-      {tiers.map(tier => (
+      <div className="flex items-center gap-3">
+        <label className="text-sm" style={{ color: 'var(--text-muted)' }}>Min articles:</label>
+        <input type="number" min="1" max="50" value={minArticles} onChange={e => setMinArticles(Math.max(1, parseInt(e.target.value) || 1))}
+          className="border rounded px-2 py-1 text-sm w-16" style={{ borderColor: 'var(--border)' }} />
+        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{scored.length} reporters shown (of {reporters.length})</span>
+      </div>
+
+      {/* Reporter Leaderboard */}
+      <div className="border rounded-lg overflow-hidden" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+        <table className="w-full text-sm">
+          <thead style={{ background: 'var(--bg-content)' }}>
+            <tr>
+              <th className="px-3 py-2 text-left font-medium text-[#4a6080]">Reporter</th>
+              <th className="px-3 py-2 text-left font-medium text-[#4a6080]">Outlets</th>
+              <th className="px-3 py-2 text-left font-medium text-[#4a6080]">Articles</th>
+              <th className="px-3 py-2 text-left font-medium text-[#4a6080]">Avg Sentiment</th>
+              <th className="px-3 py-2 text-left font-medium text-[#4a6080]">Trend</th>
+              <th className="px-3 py-2 text-left font-medium text-[#4a6080]">Top Themes</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y" style={{ borderColor: 'var(--border)' }}>
+            {scored.slice(0, 30).map(r => (
+              <tr key={r.name}>
+                <td className="px-3 py-2 font-medium" style={{ color: 'var(--text-primary)' }}>{r.name}</td>
+                <td className="px-3 py-2 text-xs" style={{ color: 'var(--text-muted)' }}>{r.outlets.join(', ')}</td>
+                <td className="px-3 py-2" style={{ color: 'var(--text-muted)' }}>{r.article_count}</td>
+                <td className="px-3 py-2"><span className={`font-bold ${sentimentColor(Math.round(r.avg_sentiment))}`}>{r.avg_sentiment}</span></td>
+                <td className="px-3 py-2">
+                  <span className={`text-xs px-1.5 py-0.5 rounded ${r.trend === 'Declining' ? 'bg-red-100 text-red-700' : r.trend === 'Improving' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>{r.trend}</span>
+                </td>
+                <td className="px-3 py-2 text-xs" style={{ color: 'var(--text-muted)' }}>{r.top_themes.slice(0, 3).map(t => t.name).join(', ')}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Priority Tiers */}
+      {tiers.map(tier => tier.reporters.length > 0 && (
         <div key={tier.label}>
           <h3 className="text-sm font-semibold text-[#002855] mb-2">{tier.label}</h3>
           <div className="space-y-2">
-            {tier.reporters.map((r, i) => (
+            {tier.reporters.map(r => (
               <div key={r.name} className={`border rounded-lg p-3 ${tier.color}`}>
                 <div className="flex items-center justify-between">
                   <div>
