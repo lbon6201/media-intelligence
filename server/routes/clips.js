@@ -185,14 +185,45 @@ function formatShortDate(dateStr) {
   }
 }
 
+// Search for an article URL using headline + outlet
+async function searchArticleUrl(headline, outlet) {
+  try {
+    const query = `${headline} ${outlet || ''}`.trim();
+    const encoded = encodeURIComponent(query);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(
+      `https://html.duckduckgo.com/html/?q=${encoded}`,
+      {
+        signal: controller.signal,
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MediaIntelBot/1.0)' },
+      }
+    );
+    clearTimeout(timeout);
+    const html = await res.text();
+    // Extract first result URL from DuckDuckGo HTML
+    const match = html.match(/class="result__a" href="([^"]+)"/);
+    if (match) {
+      let url = match[1];
+      // DuckDuckGo wraps URLs in a redirect — extract the actual URL
+      const udMatch = url.match(/uddg=([^&]+)/);
+      if (udMatch) url = decodeURIComponent(udMatch[1]);
+      // Basic validation — must be http(s)
+      if (/^https?:\/\//.test(url)) return url;
+    }
+  } catch (e) {
+    console.log(`URL search failed for "${headline}": ${e.message}`);
+  }
+  return null;
+}
+
 // Font/size constants matching the example doc (11pt Calibri, black text)
 const FONT = 'Calibri';
 const SZ_BODY = 22;       // 11pt
 const SZ_HEADING = 22;    // 11pt bold for section headings
 const SZ_ARTICLE_HEAD = 22; // 11pt bold for article headlines
-const SZ_SMALL = 20;      // 10pt for metadata
-const CLR = '000000';     // black
-const CLR_MUTED = '444444'; // dark gray for metadata
+const SZ_SMALL = 20;      // 10pt for metadata/URLs
+const CLR = '000000';     // black — used everywhere
 
 function buildClipsDoc(articles, workstream, headerConfig, aiResult) {
   const children = [];
@@ -262,20 +293,22 @@ function buildClipsDoc(articles, workstream, headerConfig, aiResult) {
     const datePart = a.publish_date ? formatShortDate(a.publish_date) : '';
     const indexChildren = [
       new TextRun({ text: 'ARTICLE: ', font: FONT, size: SZ_BODY, color: CLR }),
+      new TextRun({ text: `"${a.headline}" `, font: FONT, size: SZ_BODY, color: CLR }),
+      new TextRun({ text: '(', font: FONT, size: SZ_BODY, color: CLR }),
     ];
 
-    // Headline as hyperlink if URL available, otherwise plain text
+    // Outlet name as hyperlink to article URL
     if (a.url) {
       indexChildren.push(new ExternalHyperlink({
         link: a.url,
-        children: [new TextRun({ text: `"${a.headline}"`, font: FONT, size: SZ_BODY, color: '0563C1', underline: {} })],
+        children: [new TextRun({ text: a.outlet || 'Link', font: FONT, size: SZ_BODY, color: '0563C1', underline: {} })],
       }));
     } else {
-      indexChildren.push(new TextRun({ text: `"${a.headline}"`, font: FONT, size: SZ_BODY, color: CLR }));
+      indexChildren.push(new TextRun({ text: a.outlet || 'Unknown', font: FONT, size: SZ_BODY, color: CLR }));
     }
 
     indexChildren.push(
-      new TextRun({ text: ` (${a.outlet || 'Unknown'}${datePart ? ', ' + datePart : ''})`, font: FONT, size: SZ_BODY, color: CLR_MUTED }),
+      new TextRun({ text: `${datePart ? ', ' + datePart : ''})`, font: FONT, size: SZ_BODY, color: CLR }),
     );
 
     children.push(new Paragraph({ spacing: { before: 30, after: 30 }, children: indexChildren }));
@@ -289,30 +322,34 @@ function buildClipsDoc(articles, workstream, headerConfig, aiResult) {
   ]}));
 
   for (const a of articles) {
-    // Headline (bold) + metadata on next line
-    children.push(new Paragraph({ spacing: { before: 240, after: 20 }, children: [
-      new TextRun({ text: a.headline, font: FONT, size: SZ_ARTICLE_HEAD, bold: true, color: CLR }),
-    ]}));
-
-    // Metadata line: Outlet \n By Author \n Date
-    const metaParts = [];
-    if (a.outlet) metaParts.push(a.outlet);
-    if (a.author) metaParts.push(`By ${a.author}`);
-    if (a.publish_date) metaParts.push(formatClipsDate(a.publish_date));
-
-    if (metaParts.length > 0) {
-      children.push(new Paragraph({ spacing: { after: 40 }, children: [
-        new TextRun({ text: metaParts.join(' \n'), font: FONT, size: SZ_BODY, color: CLR_MUTED }),
+    // Headline — bold, hyperlinked if URL available
+    if (a.url) {
+      children.push(new Paragraph({ spacing: { before: 240, after: 20 }, children: [
+        new ExternalHyperlink({
+          link: a.url,
+          children: [new TextRun({ text: a.headline, font: FONT, size: SZ_ARTICLE_HEAD, bold: true, color: '0563C1', underline: {} })],
+        }),
+      ]}));
+    } else {
+      children.push(new Paragraph({ spacing: { before: 240, after: 20 }, children: [
+        new TextRun({ text: a.headline, font: FONT, size: SZ_ARTICLE_HEAD, bold: true, color: CLR }),
       ]}));
     }
 
-    // URL as hyperlink
-    if (a.url) {
+    // Metadata: Outlet, By Author, Date — each on its own line, all black
+    if (a.outlet) {
+      children.push(new Paragraph({ spacing: { after: 10 }, children: [
+        new TextRun({ text: a.outlet, font: FONT, size: SZ_BODY, color: CLR }),
+      ]}));
+    }
+    if (a.author) {
+      children.push(new Paragraph({ spacing: { after: 10 }, children: [
+        new TextRun({ text: `By ${a.author}`, font: FONT, size: SZ_BODY, color: CLR }),
+      ]}));
+    }
+    if (a.publish_date) {
       children.push(new Paragraph({ spacing: { after: 60 }, children: [
-        new ExternalHyperlink({
-          link: a.url,
-          children: [new TextRun({ text: a.url, font: FONT, size: SZ_SMALL, color: '0563C1', underline: {} })],
-        }),
+        new TextRun({ text: formatClipsDate(a.publish_date), font: FONT, size: SZ_BODY, color: CLR }),
       ]}));
     }
 
@@ -400,6 +437,22 @@ router.post('/:workstream_id/generate', async (req, res) => {
     a.cl_stakeholder_focus = safeParseJson(a.cl_stakeholder_focus);
     a.cl_internal_quotes = safeParseJson(a.cl_internal_quotes);
     a.cl_external_quotes = safeParseJson(a.cl_external_quotes);
+  }
+
+  // Search for missing URLs
+  const urlSearchPromises = articles
+    .filter(a => !a.url && a.headline)
+    .map(async (a) => {
+      const found = await searchArticleUrl(a.headline, a.outlet);
+      if (found) {
+        a.url = found;
+        // Persist back to DB so we don't search again
+        await db.run('UPDATE articles SET url = ? WHERE id = ?', found, a.id).catch(() => {});
+      }
+    });
+  if (urlSearchPromises.length > 0) {
+    console.log(`Searching for ${urlSearchPromises.length} missing article URLs...`);
+    await Promise.allSettled(urlSearchPromises);
   }
 
   const headerConfig = {
