@@ -509,6 +509,44 @@ export default function AnalyticsTab({ workstream }) {
             </div>
           </div>
 
+          {/* Coverage Velocity */}
+          {(() => {
+            if (trendDays.length < 5) return null;
+            const recent = trendDays.slice(-7);
+            const older = trendDays.slice(-14, -7);
+            if (older.length === 0) return null;
+            const recentAvgVol = recent.reduce((s, d) => s + d.count, 0) / recent.length;
+            const olderAvgVol = older.reduce((s, d) => s + d.count, 0) / older.length;
+            const recentAvgSent = recent.filter(d => d.avgSent).length > 0 ? +(recent.filter(d => d.avgSent).reduce((s, d) => s + d.avgSent, 0) / recent.filter(d => d.avgSent).length).toFixed(1) : null;
+            const olderAvgSent = older.filter(d => d.avgSent).length > 0 ? +(older.filter(d => d.avgSent).reduce((s, d) => s + d.avgSent, 0) / older.filter(d => d.avgSent).length).toFixed(1) : null;
+            const volChange = olderAvgVol > 0 ? Math.round(((recentAvgVol - olderAvgVol) / olderAvgVol) * 100) : 0;
+            const sentChange = recentAvgSent && olderAvgSent ? +(recentAvgSent - olderAvgSent).toFixed(1) : null;
+            return (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="border rounded-lg p-3" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Coverage Velocity</p>
+                  <p className="text-lg font-bold" style={{ color: volChange > 0 ? '#DC2626' : volChange < 0 ? '#16A34A' : 'var(--text-primary)' }}>
+                    {volChange > 0 ? '+' : ''}{volChange}%
+                  </p>
+                  <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                    {recentAvgVol.toFixed(1)} articles/{timeGranularity} vs {olderAvgVol.toFixed(1)} prior
+                  </p>
+                </div>
+                {sentChange !== null && (
+                  <div className="border rounded-lg p-3" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Sentiment Shift</p>
+                    <p className="text-lg font-bold" style={{ color: sentChange > 0.3 ? '#16A34A' : sentChange < -0.3 ? '#DC2626' : 'var(--text-primary)' }}>
+                      {sentChange > 0 ? '+' : ''}{sentChange}
+                    </p>
+                    <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                      {recentAvgSent}/7 recent vs {olderAvgSent}/7 prior
+                    </p>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
           {/* Recent Articles */}
           <div className="bg-white border border-[#b8cce0] rounded-lg p-4">
             <h3 className="text-sm font-semibold text-[#002855] mb-3">Recent Articles</h3>
@@ -1002,6 +1040,34 @@ function ComparisonView({ workstream }) {
               </div>
             ))}
           </div>
+
+          {/* Side-by-side sentiment bars */}
+          {data.entities.length > 1 && (
+            <div className="border rounded-lg p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+              <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Sentiment Comparison</h3>
+              <div className="space-y-2">
+                {data.entities.map((e, i) => {
+                  const sent = e.avg_firm_sentiment || e.avg_sentiment || 4;
+                  const pct = ((sent - 1) / 6) * 100;
+                  const colors = ['#0057b8', '#dc2626', '#16a34a', '#d97706', '#7c3aed'];
+                  return (
+                    <div key={e.name} className="flex items-center gap-3">
+                      <span className="text-xs font-medium w-28 truncate" style={{ color: 'var(--text-primary)' }}>{e.name}</span>
+                      <div className="flex-1 bg-slate-100 rounded-full h-5 relative">
+                        <div className="rounded-full h-5 flex items-center justify-end pr-2" style={{ width: `${Math.max(pct, 8)}%`, backgroundColor: colors[i % colors.length] }}>
+                          <span className="text-[10px] font-bold text-white">{sent}</span>
+                        </div>
+                      </div>
+                      <span className="text-xs w-12 text-right" style={{ color: 'var(--text-muted)' }}>{e.total_articles} art.</span>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="flex justify-between mt-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                <span>1 (Very Negative)</span><span>4 (Neutral)</span><span>7 (Very Positive)</span>
+              </div>
+            </div>
+          )}
 
           {/* Comparison table */}
           <div className="bg-white border border-[#b8cce0] rounded-lg overflow-hidden">
