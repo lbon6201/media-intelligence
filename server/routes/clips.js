@@ -111,56 +111,84 @@ function cleanArticleText(text) {
   return cleaned.trim();
 }
 
-// Split cleaned text into proper paragraphs for Word doc output.
-// Handles both double-newline-separated text (Factiva) and single-newline text (URL ingest).
+// Use Claude Haiku to extract only the article body text, stripping all non-article content.
+// This handles Bloomberg market data, related articles, author bios, nav chrome, etc.
+async function cleanWithClaude(rawText, headline) {
+  try {
+    // Truncate to keep costs low
+    const input = rawText.slice(0, 16000);
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 8000,
+        system: [
+          'Extract ONLY the article body text from the input. Remove everything that is not part of the actual article:',
+          '- Navigation menus, headers, footers, sidebars',
+          '- "Read more", "Related articles", "More from..." sections',
+          '- Author bios, social media links, share buttons',
+          '- Subscription prompts, paywall text, cookie notices',
+          '- Stock tickers, market data tables, Bloomberg Terminal references',
+          '- Image captions, photo credits, video embeds',
+          '- Legal disclaimers, copyright notices',
+          '- "Sign up for...", "Get the newsletter" prompts',
+          '- Any repeated boilerplate text',
+          '',
+          'Return ONLY the clean article body text. Preserve the original wording exactly — do not summarize, paraphrase, or add anything.',
+          'Output each sentence as its own paragraph (separated by a blank line).',
+          'Do NOT include any preamble or explanation — just the cleaned text.',
+        ].join('\n'),
+        messages: [{ role: 'user', content: `Article headline: "${headline}"\n\nRaw text:\n${input}` }],
+      }),
+    });
+    const d = await res.json();
+    if (d.error) throw new Error(d.error.message);
+    const cleaned = d.content?.[0]?.text || '';
+    if (cleaned.length > 50) return cleaned;
+  } catch (e) {
+    console.log(`Claude clean failed for "${headline}": ${e.message}`);
+  }
+  return null;
+}
+
+// Split text into paragraphs — one sentence per paragraph.
 function splitIntoParagraphs(text) {
   if (!text) return [];
 
-  // If text has double newlines, use those as paragraph boundaries
-  const hasDoubleNewlines = /\n\s*\n/.test(text);
-  if (hasDoubleNewlines) {
-    return text.split(/\n\s*\n/).map(block => {
-      return block.trim()
-        .split('\n')
-        .map(l => l.trim())
-        .filter(l => l.length > 0)
-        .join(' ')
-        .replace(/\s{2,}/g, ' ')
-        .trim();
-    }).filter(p => p.length > 0);
+  // If Claude already returned blank-line-separated paragraphs, respect those
+  // but still split each into individual sentences
+  const blocks = text.includes('\n\n')
+    ? text.split(/\n\s*\n/).map(b => b.trim()).filter(b => b.length > 0)
+    : [text];
+
+  const sentences = [];
+  for (const block of blocks) {
+    // Flatten any remaining newlines within a block
+    const flat = block
+      .split('\n')
+      .map(l => l.trim())
+      .filter(l => l.length > 0)
+      .join(' ')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+
+    if (!flat) continue;
+
+    // Split on sentence boundaries: sentence-ending punctuation followed by space + capital letter
+    const parts = flat
+      .split(/(?<=[.!?]["'\u201D\u2019)]*)\s+(?=[A-Z\u201C\u2018"'(])/)
+      .map(s => s.trim())
+      .filter(s => s.length > 0);
+
+    sentences.push(...parts);
   }
 
-  // Single-newline text: each line that ends a sentence is a paragraph.
-  // Lines that don't end with sentence-ending punctuation get merged with the next line.
-  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-  const paragraphs = [];
-  let current = '';
-
-  for (const line of lines) {
-    if (current) {
-      current += ' ' + line;
-    } else {
-      current = line;
-    }
-
-    // A line ends a paragraph if it ends with sentence-ending punctuation,
-    // or if it's a standalone short line that looks like a section header,
-    // or if the next line starts with a capital letter after sentence-ending punct.
-    const endsSentence = /[.!?"')\u201D]\s*$/.test(current);
-    const isLongEnough = current.length > 60;
-
-    if (endsSentence && isLongEnough) {
-      paragraphs.push(current.replace(/\s{2,}/g, ' ').trim());
-      current = '';
-    }
-  }
-
-  // Don't lose the last chunk
-  if (current.trim()) {
-    paragraphs.push(current.replace(/\s{2,}/g, ' ').trim());
-  }
-
-  return paragraphs.filter(p => p.length > 0);
+  return sentences;
 }
 
 // Call Claude Sonnet to generate summary + key narratives
@@ -445,9 +473,9 @@ function buildClipsDoc(articles, workstream, headerConfig, aiResult) {
       ]}));
     }
 
-    // Full article text — cleaned and split into proper paragraphs
-    const cleanedText = cleanArticleText(a.full_text || '');
-    const paragraphs = splitIntoParagraphs(cleanedText);
+    // Full article text — use Claude-cleaned version if available, fall back to regex
+    const articleText = a._cleanedText || cleanArticleText(a.full_text || '');
+    const paragraphs = splitIntoParagraphs(articleText);
     for (const para of paragraphs) {
       if (!para || para.length < 3) continue;
       children.push(new Paragraph({
@@ -546,6 +574,16 @@ router.post('/:workstream_id/generate', async (req, res) => {
     console.log(`Searching for ${urlSearchPromises.length} missing article URLs...`);
     await Promise.allSettled(urlSearchPromises);
   }
+
+  // Clean article text with Claude Haiku (parallel, ~$0.001 each)
+  console.log(`Cleaning ${articles.length} article texts with Claude...`);
+  const cleanPromises = articles.map(async (a) => {
+    if (a.full_text && a.full_text.length > 100) {
+      const cleaned = await cleanWithClaude(a.full_text, a.headline);
+      if (cleaned) a._cleanedText = cleaned;
+    }
+  });
+  await Promise.allSettled(cleanPromises);
 
   const headerConfig = {
     to: header_to || '',
