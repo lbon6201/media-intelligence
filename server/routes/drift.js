@@ -18,7 +18,7 @@ router.get('/:workstream_id', async (req, res) => {
 
   // Compute actual mix from last 14 days
   const d14 = new Date(Date.now() - 14 * 86400000).toISOString().split('T')[0];
-  const articles = await db.all(`SELECT cl_topics FROM articles WHERE workstream_id = ? AND cl_status IN ('classified','approved') AND publish_date >= ?`, req.params.workstream_id, d14);
+  const articles = await db.all(`SELECT cl_topics FROM articles WHERE workstream_id = ? AND cl_status = 'classified' AND publish_date >= ?`, req.params.workstream_id, d14);
 
   const actual = {};
   let totalTags = 0;
@@ -73,9 +73,9 @@ router.post('/:workstream_id/snapshots', async (req, res) => {
   if (!name) return res.status(400).json({ error: 'name required' });
 
   // Capture current state
-  const stats = await db.get(`SELECT COUNT(*) as total, AVG(cl_sentiment_score) as avg_sent FROM articles WHERE workstream_id = ? AND cl_status IN ('classified','approved')`, req.params.workstream_id);
+  const stats = await db.get(`SELECT COUNT(*) as total, AVG(cl_sentiment_score) as avg_sent FROM articles WHERE workstream_id = ? AND cl_status = 'classified'`, req.params.workstream_id);
   const topicCounts = {};
-  const articles = await db.all(`SELECT cl_topics FROM articles WHERE workstream_id = ? AND cl_status IN ('classified','approved')`, req.params.workstream_id);
+  const articles = await db.all(`SELECT cl_topics FROM articles WHERE workstream_id = ? AND cl_status = 'classified'`, req.params.workstream_id);
   articles.forEach(a => { (safeJson(a.cl_topics) || []).forEach(t => topicCounts[t] = (topicCounts[t] || 0) + 1); });
 
   const data = { total_articles: stats.total, avg_sentiment: stats.avg_sent ? +stats.avg_sent.toFixed(1) : null, topic_distribution: topicCounts };

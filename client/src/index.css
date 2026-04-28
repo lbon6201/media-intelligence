@@ -26,8 +26,8 @@
   --sentiment-7: #15803D;
   --status-pending: #6B7280;
   --status-classified: #2563EB;
-  --status-approved: #16A34A;
-  --status-rejected: #DC2626;
+  --color-success: #16A34A;
+  --color-danger: #DC2626;
   --border: #E2E8F0;
   --border-subtle: #F1F5F9;
   --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
@@ -69,8 +69,6 @@ body {
 /* Status badges */
 .status-pending { background: #F3F4F6; color: var(--status-pending); }
 .status-classified { background: var(--accent-subtle); color: var(--status-classified); }
-.status-approved { background: #DCFCE7; color: var(--status-approved); }
-.status-rejected { background: #FEE2E2; color: var(--status-rejected); }
 
 /* Table styles */
 .mip-table { width: 100%; font-size: 13px; }

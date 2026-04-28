@@ -5,6 +5,7 @@ import { LoginPage } from './components/AuthPages';
 import WorkstreamSetup from './components/WorkstreamSetup';
 import IngestTab from './components/IngestTab';
 import QueueTab from './components/QueueTab';
+import ArticlesTab from './components/ArticlesTab';
 import AnalyticsTab from './components/AnalyticsTab';
 import QuotesTab from './components/QuotesTab';
 import WatchlistTab from './components/WatchlistTab';
@@ -12,6 +13,7 @@ import ExportTab from './components/ExportTab';
 import StrategyTab from './components/StrategyTab';
 import CalendarTab from './components/CalendarTab';
 import NetworkTab from './components/NetworkTab';
+import ClipsTab from './components/ClipsTab';
 
 export const AppContext = createContext();
 
@@ -19,6 +21,7 @@ const NAV_SECTIONS = [
   { label: 'MONITOR', items: [
     { key: 'Ingest', icon: 'Ingest', label: 'Ingest' },
     { key: 'Queue', icon: 'Queue', label: 'Queue' },
+    { key: 'Articles', icon: 'Articles', label: 'Articles' },
     { key: 'Calendar', icon: 'Calendar', label: 'Calendar' },
   ]},
   { label: 'ANALYZE', items: [
@@ -31,6 +34,7 @@ const NAV_SECTIONS = [
     { key: 'Watchlist', icon: 'Watchlist', label: 'Watchlist' },
   ]},
   { label: 'OUTPUT', items: [
+    { key: 'Clips', icon: 'Clips', label: 'Clips' },
     { key: 'Export', icon: 'Export', label: 'Export' },
   ]},
 ];
@@ -42,6 +46,8 @@ const EXTRA_ICONS = {
   Calendar: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>',
   Network: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>',
   Strategy: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>',
+  Articles: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 12h10"/>',
+  Clips: '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/>',
 };
 const ALL_ICONS = { ...NAV_ICONS, ...EXTRA_ICONS };
 
@@ -64,6 +70,7 @@ export default function App() {
   const [classifyingWs, setClassifyingWs] = useState(null);
   const [classifyProgress, setClassifyProgress] = useState(null);
   const classifyPollRef = useRef(null);
+  const [clipsArticleIds, setClipsArticleIds] = useState([]);
 
   // Check existing auth on mount
   useEffect(() => {
@@ -249,12 +256,14 @@ export default function App() {
               <>
                 {tab === 'Queue' && <QueueTab workstream={activeWs} />}
                 {tab === 'Ingest' && <IngestTab workstream={activeWs} />}
+                {tab === 'Articles' && <ArticlesTab workstream={activeWs} onExportClips={(ids) => { setClipsArticleIds(ids); setTab('Clips'); }} />}
                 {tab === 'Calendar' && <CalendarTab workstream={activeWs} />}
                 {tab === 'Analytics' && <AnalyticsTab workstream={activeWs} />}
                 {tab === 'Network' && <NetworkTab workstream={activeWs} />}
                 {tab === 'Strategy' && <StrategyTab workstream={activeWs} />}
                 {tab === 'Quotes' && <QuotesTab workstream={activeWs} />}
                 {tab === 'Watchlist' && <WatchlistTab workstream={activeWs} />}
+                {tab === 'Clips' && <ClipsTab workstream={activeWs} selectedArticleIds={clipsArticleIds} />}
                 {tab === 'Export' && <ExportTab workstream={activeWs} />}
                 {tab === 'Setup' && <WorkstreamSetup workstreams={workstreams} activeWs={activeWs} onRefresh={loadWorkstreams} onSelect={setActiveWs} />}
               </>

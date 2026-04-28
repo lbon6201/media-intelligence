@@ -23,7 +23,7 @@ router.get('/:workstream_id', async (req, res) => {
   const speakers = await db.all('SELECT * FROM watchlist_speakers WHERE workstream_id = ? ORDER BY added_at DESC', req.params.workstream_id);
 
   // Count quotes per speaker
-  const articles = await db.all(`SELECT cl_external_quotes, cl_institutional_investor_quotes, publish_date FROM articles WHERE workstream_id = ? AND cl_status IN ('classified','approved')`, req.params.workstream_id);
+  const articles = await db.all(`SELECT cl_external_quotes, cl_institutional_investor_quotes, publish_date FROM articles WHERE workstream_id = ? AND cl_status = 'classified'`, req.params.workstream_id);
 
   const result = speakers.map(sp => {
     let totalQuotes = 0, lastSeen = null;
@@ -70,7 +70,7 @@ router.get('/:workstream_id/:id/quotes', async (req, res) => {
   const sp = await db.get('SELECT * FROM watchlist_speakers WHERE id = ?', req.params.id);
   if (!sp) return res.status(404).json({ error: 'Speaker not found' });
 
-  const articles = await db.all(`SELECT id, headline, outlet, publish_date, cl_external_quotes, cl_institutional_investor_quotes FROM articles WHERE workstream_id = ? AND cl_status IN ('classified','approved')`, req.params.workstream_id);
+  const articles = await db.all(`SELECT id, headline, outlet, publish_date, cl_external_quotes, cl_institutional_investor_quotes FROM articles WHERE workstream_id = ? AND cl_status = 'classified'`, req.params.workstream_id);
 
   const quotes = [];
   for (const a of articles) {
@@ -89,7 +89,7 @@ router.get('/:workstream_id/suggestions', async (req, res) => {
   const watchedRows = await db.all('SELECT name FROM watchlist_speakers WHERE workstream_id = ?', req.params.workstream_id);
   const watched = new Set(watchedRows.map(r => r.name.toLowerCase()));
 
-  const articles = await db.all(`SELECT cl_external_quotes, cl_institutional_investor_quotes FROM articles WHERE workstream_id = ? AND cl_status IN ('classified','approved')`, req.params.workstream_id);
+  const articles = await db.all(`SELECT cl_external_quotes, cl_institutional_investor_quotes FROM articles WHERE workstream_id = ? AND cl_status = 'classified'`, req.params.workstream_id);
 
   const counts = {};
   for (const a of articles) {

@@ -9,7 +9,7 @@ router.get('/', async (req, res) => {
   if (!workstream_id) return res.status(400).json({ error: 'workstream_id required' });
 
   const articles = await db.all(`SELECT author, outlet, cl_sentiment_score, cl_topics, cl_firms_mentioned, cl_firm_sentiments, headline, publish_date, word_count, cl_key_takeaway
-    FROM articles WHERE workstream_id = ? AND cl_status IN ('classified', 'approved') AND author IS NOT NULL`, workstream_id);
+    FROM articles WHERE workstream_id = ? AND cl_status = 'classified' AND author IS NOT NULL`, workstream_id);
 
   // Load aliases for resolution
   const aliasRows = await db.all('SELECT alias, canonical_name FROM reporter_aliases');

@@ -12,14 +12,14 @@ async function assembleContext(wsId) {
   const taxonomy = JSON.parse(ws.taxonomy);
 
   // Summary stats
-  const stats = await db.get(`SELECT COUNT(*) as total, AVG(cl_sentiment_score) as avg_sent FROM articles WHERE workstream_id = ? AND cl_status IN ('classified','approved')`, wsId) || { total: 0, avg_sent: null };
+  const stats = await db.get(`SELECT COUNT(*) as total, AVG(cl_sentiment_score) as avg_sent FROM articles WHERE workstream_id = ? AND cl_status = 'classified'`, wsId) || { total: 0, avg_sent: null };
 
   // Recent articles (metadata only, no full_text)
-  const recent = await db.all(`SELECT id, headline, outlet, author, publish_date, cl_sentiment_score, cl_sentiment_label, cl_topics, cl_key_entities, cl_firms_mentioned, cl_key_takeaway, cl_rationale FROM articles WHERE workstream_id = ? AND cl_status IN ('classified','approved') ORDER BY publish_date DESC LIMIT 30`, wsId);
+  const recent = await db.all(`SELECT id, headline, outlet, author, publish_date, cl_sentiment_score, cl_sentiment_label, cl_topics, cl_key_entities, cl_firms_mentioned, cl_key_takeaway, cl_rationale FROM articles WHERE workstream_id = ? AND cl_status = 'classified' ORDER BY publish_date DESC LIMIT 30`, wsId);
 
   // Top reporters
   const reporterMap = {};
-  const articles = await db.all(`SELECT author, outlet, cl_sentiment_score, cl_topics FROM articles WHERE workstream_id = ? AND cl_status IN ('classified','approved') AND author IS NOT NULL`, wsId);
+  const articles = await db.all(`SELECT author, outlet, cl_sentiment_score, cl_topics FROM articles WHERE workstream_id = ? AND cl_status = 'classified' AND author IS NOT NULL`, wsId);
   for (const a of articles) {
     const name = a.author;
     if (!reporterMap[name]) reporterMap[name] = { name, outlets: new Set(), count: 0, sentSum: 0, topics: {} };

@@ -263,10 +263,10 @@ export default function QuotesTab({ workstream }) {
                         <div className="flex items-center gap-3">
                           <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{q.article_outlet} · {q.article_date}</span>
                           <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onClick={() => handleCopy(q)} className="text-[10px] px-1.5 py-0.5 rounded" style={{ color: copied === q.id ? 'var(--status-approved)' : 'var(--accent)', background: 'var(--bg-content)' }}>
+                            <button onClick={() => handleCopy(q)} className="text-[10px] px-1.5 py-0.5 rounded" style={{ color: copied === q.id ? 'var(--color-success)' : 'var(--accent)', background: 'var(--bg-content)' }}>
                               {copied === q.id ? 'Copied!' : 'Copy'}
                             </button>
-                            <button onClick={() => handleFlag(q.id)} className="text-[10px] px-1.5 py-0.5 rounded" style={{ color: 'var(--status-rejected)', background: 'var(--bg-content)' }} title="Mark as not relevant">
+                            <button onClick={() => handleFlag(q.id)} className="text-[10px] px-1.5 py-0.5 rounded" style={{ color: 'var(--color-danger)', background: 'var(--bg-content)' }} title="Mark as not relevant">
                               Not relevant
                             </button>
                           </div>
@@ -334,7 +334,7 @@ export default function QuotesTab({ workstream }) {
                                       <span className={`px-1.5 py-0.5 rounded-full flex-shrink-0 ${stanceColor(q.stance)}`}>{q.stance}</span>
                                       <p className="italic flex-1" style={{ color: 'var(--text-secondary)' }}>"{q.text}"</p>
                                       <span className="flex-shrink-0" style={{ color: 'var(--text-muted)' }}>{q.article_outlet} · {q.article_date}</span>
-                                      <button onClick={(e) => { e.stopPropagation(); handleCopy(q); }} className="opacity-0 group-hover:opacity-100 text-[10px] px-1 rounded" style={{ color: copied === q.id ? 'var(--status-approved)' : 'var(--accent)' }}>{copied === q.id ? '✓' : 'Copy'}</button>
+                                      <button onClick={(e) => { e.stopPropagation(); handleCopy(q); }} className="opacity-0 group-hover:opacity-100 text-[10px] px-1 rounded" style={{ color: copied === q.id ? 'var(--color-success)' : 'var(--accent)' }}>{copied === q.id ? '✓' : 'Copy'}</button>
                                     </div>
                                   ))}
                                   {quotes.filter(q => q.speaker === s.name).length === 0 && (
@@ -374,7 +374,7 @@ export default function QuotesTab({ workstream }) {
                             <td><div className="flex items-center gap-2"><div className="flex h-2 w-20 rounded-full overflow-hidden">{pos > 0 && <div className="bg-emerald-500" style={{ width: `${(pos / total) * 100}%` }} />}{neu > 0 && <div className="bg-slate-300" style={{ width: `${(neu / total) * 100}%` }} />}{neg > 0 && <div className="bg-red-500" style={{ width: `${(neg / total) * 100}%` }} />}</div></div></td>
                             <td className="text-right"><span className="text-xs" style={{ color: 'var(--text-muted)' }}>{isExpanded ? '▲' : '▼'}</span></td>
                           </tr>
-                          {isExpanded && <tr><td colSpan={4} style={{ background: 'var(--bg-content)', padding: '8px 12px' }}><div className="space-y-1.5">{quotes.filter(q => q.speaker === s.name).map(q => (<div key={q.id} className="flex gap-2 text-xs items-start group"><span className={`px-1.5 py-0.5 rounded-full flex-shrink-0 ${stanceColor(q.stance)}`}>{q.stance}</span><p className="italic flex-1" style={{ color: 'var(--text-secondary)' }}>"{q.text}"</p><span className="flex-shrink-0" style={{ color: 'var(--text-muted)' }}>{q.article_outlet}</span><button onClick={(e) => { e.stopPropagation(); handleCopy(q); }} className="opacity-0 group-hover:opacity-100 text-[10px] px-1 rounded" style={{ color: copied === q.id ? 'var(--status-approved)' : 'var(--accent)' }}>{copied === q.id ? '✓' : 'Copy'}</button></div>))}</div></td></tr>}
+                          {isExpanded && <tr><td colSpan={4} style={{ background: 'var(--bg-content)', padding: '8px 12px' }}><div className="space-y-1.5">{quotes.filter(q => q.speaker === s.name).map(q => (<div key={q.id} className="flex gap-2 text-xs items-start group"><span className={`px-1.5 py-0.5 rounded-full flex-shrink-0 ${stanceColor(q.stance)}`}>{q.stance}</span><p className="italic flex-1" style={{ color: 'var(--text-secondary)' }}>"{q.text}"</p><span className="flex-shrink-0" style={{ color: 'var(--text-muted)' }}>{q.article_outlet}</span><button onClick={(e) => { e.stopPropagation(); handleCopy(q); }} className="opacity-0 group-hover:opacity-100 text-[10px] px-1 rounded" style={{ color: copied === q.id ? 'var(--color-success)' : 'var(--accent)' }}>{copied === q.id ? '✓' : 'Copy'}</button></div>))}</div></td></tr>}
                         </React.Fragment>
                       );
                     })}

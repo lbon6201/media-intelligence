@@ -128,7 +128,7 @@ export default function IngestTab({ workstream }) {
               {loading ? parseStatus || 'Parsing...' : 'Parse with AI'}
             </button>
             {preview.length > 0 && (
-              <button onClick={handleIngest} disabled={loading} className="btn-primary px-4 py-2 text-sm" style={{ background: 'var(--status-approved)' }}>
+              <button onClick={handleIngest} disabled={loading} className="btn-primary px-4 py-2 text-sm" style={{ background: 'var(--color-success)' }}>
                 {loading ? 'Ingesting...' : `Ingest ${preview.length} Articles`}
               </button>
             )}
@@ -178,7 +178,7 @@ export default function IngestTab({ workstream }) {
           <textarea className="w-full rounded-lg px-4 py-3 text-sm font-mono h-48 outline-none" style={{ border: '1px solid var(--border)', background: 'var(--bg-card)' }} placeholder="Paste URLs, one per line..." value={urlText} onChange={e => setUrlText(e.target.value)} />
           <div className="flex gap-3">
             <button onClick={handleParseUrls} disabled={!urlText.trim()} className="btn-primary px-4 py-2 text-sm">Parse URLs</button>
-            {urlPreview.length > 0 && <button onClick={handleIngestUrls} disabled={loading} className="btn-primary px-4 py-2 text-sm" style={{ background: 'var(--status-approved)' }}>{loading ? 'Fetching...' : `Fetch ${urlPreview.length} URLs`}</button>}
+            {urlPreview.length > 0 && <button onClick={handleIngestUrls} disabled={loading} className="btn-primary px-4 py-2 text-sm" style={{ background: 'var(--color-success)' }}>{loading ? 'Fetching...' : `Fetch ${urlPreview.length} URLs`}</button>}
           </div>
           {urlPreview.length > 0 && (
             <div className="card divide-y" style={{ borderColor: 'var(--border)' }}>

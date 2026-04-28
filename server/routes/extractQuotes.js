@@ -70,7 +70,7 @@ router.post('/:workstream_id', async (req, res) => {
 
   // Get classified articles that haven't had dedicated quote extraction
   const articles = await db.all(
-    `SELECT id, headline, outlet, author, publish_date, full_text FROM articles WHERE workstream_id = ? AND cl_status IN ('classified', 'approved')`,
+    `SELECT id, headline, outlet, author, publish_date, full_text FROM articles WHERE workstream_id = ? AND cl_status = 'classified'`,
     workstream_id
   );
 

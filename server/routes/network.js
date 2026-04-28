@@ -6,7 +6,7 @@ const router = Router();
 function safeJson(s) { try { return JSON.parse(s); } catch { return null; } }
 
 router.get('/:workstream_id', async (req, res) => {
-  const articles = await db.all(`SELECT author, outlet, cl_key_entities, cl_firms_mentioned, cl_external_quotes, cl_institutional_investor_quotes, cl_sentiment_score FROM articles WHERE workstream_id = ? AND cl_status IN ('classified','approved')`, req.params.workstream_id);
+  const articles = await db.all(`SELECT author, outlet, cl_key_entities, cl_firms_mentioned, cl_external_quotes, cl_institutional_investor_quotes, cl_sentiment_score FROM articles WHERE workstream_id = ? AND cl_status = 'classified'`, req.params.workstream_id);
 
   const nodes = {};
   const edgeMap = {};

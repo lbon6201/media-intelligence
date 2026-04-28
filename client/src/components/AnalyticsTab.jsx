@@ -15,7 +15,7 @@ export default function AnalyticsTab({ workstream }) {
       api.getArticles({ workstream_id: workstream.id, status: '' }),
       api.getReporters(workstream.id),
     ]);
-    setArticles(arts.filter(a => a.cl_status === 'classified' || a.cl_status === 'approved'));
+    setArticles(arts.filter(a => a.cl_status === 'classified'));
     setReporters(reps);
   }, [workstream.id]);
 

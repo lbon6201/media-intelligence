@@ -19,7 +19,7 @@ router.post('/:workstream_id/generate', async (req, res) => {
       if (a) articles.push(a);
     }
   } else if (topic) {
-    articles = await db.all(`SELECT * FROM articles WHERE workstream_id = ? AND cl_status IN ('classified','approved') AND cl_topics LIKE ? ORDER BY publish_date DESC LIMIT 10`,
+    articles = await db.all(`SELECT * FROM articles WHERE workstream_id = ? AND cl_status = 'classified' AND cl_topics LIKE ? ORDER BY publish_date DESC LIMIT 10`,
       workstream_id, `%${topic}%`);
   }
 

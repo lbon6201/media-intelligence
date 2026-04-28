@@ -127,8 +127,7 @@ router.post('/normalize-outlets', async (req, res) => {
 router.put('/:id', async (req, res) => {
   const { cl_status, internal_notes, internal_flags, internal_tags, annotated_by, headline, outlet, author, publish_date } = req.body;
   if (cl_status) {
-    const now = cl_status === 'approved' ? new Date().toISOString() : null;
-    await db.run('UPDATE articles SET cl_status = ?, approved_at = COALESCE(?, approved_at) WHERE id = ?', cl_status, now, req.params.id);
+    await db.run('UPDATE articles SET cl_status = ? WHERE id = ?', cl_status, req.params.id);
   }
   // Update editable article metadata fields
   if (headline !== undefined || outlet !== undefined || author !== undefined || publish_date !== undefined) {
@@ -160,9 +159,8 @@ router.put('/:id', async (req, res) => {
 router.put('/bulk-status', async (req, res) => {
   const { ids, cl_status } = req.body;
   if (!Array.isArray(ids) || !cl_status) return res.status(400).json({ error: 'ids array and cl_status required' });
-  const now = cl_status === 'approved' ? new Date().toISOString() : null;
   await db.transaction(async () => {
-    for (const id of ids) await db.run('UPDATE articles SET cl_status = ?, approved_at = COALESCE(?, approved_at) WHERE id = ?', cl_status, now, id);
+    for (const id of ids) await db.run('UPDATE articles SET cl_status = ? WHERE id = ?', cl_status, id);
   });
   res.json({ success: true, updated: ids.length });
 });

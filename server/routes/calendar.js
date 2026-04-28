@@ -6,7 +6,7 @@ const router = Router();
 
 // Get articles grouped by date for calendar
 router.get('/:workstream_id', async (req, res) => {
-  const articles = await db.all(`SELECT id, headline, outlet, author, publish_date, cl_sentiment_score, cl_sentiment_label, cl_topics FROM articles WHERE workstream_id = ? AND cl_status IN ('classified','approved') ORDER BY publish_date DESC`, req.params.workstream_id);
+  const articles = await db.all(`SELECT id, headline, outlet, author, publish_date, cl_sentiment_score, cl_sentiment_label, cl_topics FROM articles WHERE workstream_id = ? AND cl_status = 'classified' ORDER BY publish_date DESC`, req.params.workstream_id);
 
   const byDate = {};
   for (const a of articles) {

@@ -152,6 +152,7 @@ const BYLINE_RX = [
   /^by\s+[A-Z]/i,                                  // "By John Smith"
   /^by\s+\w+\s+\w+/i,                              // "by firstname lastname"
   /^[A-Z][a-z]+\s+[A-Z][a-z]+\s+(?:and|,)\s+[A-Z]/,  // "John Smith and Jane Doe"
+  /^[A-Z][a-z]+\s+[A-Z][a-z]+\s*,\s+[A-Z][a-z]+\s+[A-Z][a-z]+/,  // "John Smith, Jane Doe"
   /^[A-Z][a-z]+\s+[A-Z][a-z]+\s*$/,               // "John Smith" alone on a line (2 capitalized words)
   /^[A-Z][a-z]+\s+[A-Z][a-z]+\s*\|/,              // "John Smith | Reuters"
   /^[A-Z][a-z]+\s+[A-Z][a-z]+\s*,\s*[A-Z]/,       // "John Smith, Reuters"
@@ -248,7 +249,10 @@ function extractAuthor(lines, lineTypes) {
 
   // Strategy 2: Look for "By ..." or "Author: ..." pattern anywhere in first 20 lines
   for (let i = 0; i < Math.min(lines.length, 20); i++) {
-    const t = lines[i].trim();
+    // Strip HTML/markdown link markup from the line before matching
+    const t = lines[i].trim()
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+      .replace(/<a[^>]*>([^<]+)<\/a>/gi, '$1');
     const m = t.match(/^(?:by|BY|By)\s+(.+)/)
       || t.match(/^(?:author|reporter|written by|reported by)[:\s]+(.+)/i)
       || t.match(/^(.+?)\s*\|\s*(?:Reuters|Bloomberg|AP|Associated Press|CNBC)/i);  // "John Smith | Reuters"
@@ -284,6 +288,12 @@ function extractAuthor(lines, lineTypes) {
 function cleanAuthorName(raw) {
   if (!raw) return null;
   let name = raw
+    // Strip hyperlinks: extract display text from markdown-style [text](url) or bare URLs
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    // Strip bare URLs that might appear as author names
+    .replace(/https?:\/\/\S+/g, '')
+    // Strip HTML anchor tags: <a href="...">Name</a> → Name
+    .replace(/<a[^>]*>([^<]+)<\/a>/gi, '$1')
     .replace(/^(?:by|BY|By|author|reporter|written by|reported by)[:\s]+/i, '')
     .replace(/\s+and\s+Reuters.*$/i, '')  // "John Smith and Reuters"
     .replace(/\s*\|.*$/, '')              // "John Smith | Bloomberg"
@@ -296,8 +306,10 @@ function cleanAuthorName(raw) {
 
   // Don't return names that are too short or too long
   if (name.length < 3 || name.length > 80) return null;
-  // Don't return if it looks like a title/headline
-  if (name.split(/\s+/).length > 5) return null;
+  // Don't return if it looks like a title/headline (but allow multi-author lines with "and"/"," separators)
+  const namePartsCount = name.replace(/\s+and\s+/gi, ', ').split(',').length;
+  if (namePartsCount === 1 && name.split(/\s+/).length > 5) return null;
+  if (namePartsCount > 1 && name.split(/\s+/).length > 5 * namePartsCount) return null;
 
   return name;
 }

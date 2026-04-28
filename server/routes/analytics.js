@@ -23,7 +23,7 @@ router.get('/:workstream_id/comparison', async (req, res) => {
   if (!entitiesParam) return res.status(400).json({ error: 'entities param required' });
 
   const entityNames = entitiesParam.split(',').map(s => s.trim()).filter(Boolean);
-  let articles = await db.all(`SELECT * FROM articles WHERE workstream_id = ? AND cl_status IN ('classified','approved')`, req.params.workstream_id);
+  let articles = await db.all(`SELECT * FROM articles WHERE workstream_id = ? AND cl_status = 'classified'`, req.params.workstream_id);
 
   if (from) articles = articles.filter(a => a.publish_date >= from);
   if (to) articles = articles.filter(a => a.publish_date <= to);
@@ -97,7 +97,7 @@ router.get('/:workstream_id/comparison', async (req, res) => {
 
 // Get all unique entities for the selector
 router.get('/:workstream_id/entities', async (req, res) => {
-  const articles = await db.all(`SELECT cl_key_entities, cl_firms_mentioned FROM articles WHERE workstream_id = ? AND cl_status IN ('classified','approved')`, req.params.workstream_id);
+  const articles = await db.all(`SELECT cl_key_entities, cl_firms_mentioned FROM articles WHERE workstream_id = ? AND cl_status = 'classified'`, req.params.workstream_id);
   const entities = {};
   articles.forEach(a => {
     (safeJson(a.cl_key_entities) || []).forEach(e => entities[e] = (entities[e] || 0) + 1);
@@ -118,7 +118,7 @@ router.get('/:workstream_id/gaps', async (req, res) => {
   const d14 = new Date(now - 14 * 86400000).toISOString().split('T')[0];
   const d30 = new Date(now - 30 * 86400000).toISOString().split('T')[0];
 
-  const articles = await db.all(`SELECT cl_topics, publish_date FROM articles WHERE workstream_id = ? AND cl_status IN ('classified','approved')`, req.params.workstream_id);
+  const articles = await db.all(`SELECT cl_topics, publish_date FROM articles WHERE workstream_id = ? AND cl_status = 'classified'`, req.params.workstream_id);
 
   const gaps = [];
   const overRepresented = [];
@@ -151,7 +151,7 @@ router.get('/:workstream_id/gaps', async (req, res) => {
 
 // Sentiment Velocity
 router.get('/:workstream_id/velocity', async (req, res) => {
-  const articles = await db.all(`SELECT cl_topics, cl_key_entities, cl_firms_mentioned, cl_sentiment_score, publish_date FROM articles WHERE workstream_id = ? AND cl_status IN ('classified','approved') AND cl_sentiment_score IS NOT NULL`, req.params.workstream_id);
+  const articles = await db.all(`SELECT cl_topics, cl_key_entities, cl_firms_mentioned, cl_sentiment_score, publish_date FROM articles WHERE workstream_id = ? AND cl_status = 'classified' AND cl_sentiment_score IS NOT NULL`, req.params.workstream_id);
 
   const now = new Date();
   const d7 = new Date(now - 7 * 86400000).toISOString().split('T')[0];

@@ -112,7 +112,7 @@ export default function WorkstreamSetup({ workstreams, activeWs, onRefresh, onSe
           <div>
             <div className="flex items-center justify-between mb-1">
               <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>Strategic Context</label>
-              {contextSaved && <span className="text-xs" style={{ color: 'var(--status-approved)' }}>Saved</span>}
+              {contextSaved && <span className="text-xs" style={{ color: 'var(--color-success)' }}>Saved</span>}
             </div>
             <p className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
               Describe the client's situation, strategic position, why this coverage matters, and what your communications goals are. This context is included in every analysis Claude performs for this workstream.

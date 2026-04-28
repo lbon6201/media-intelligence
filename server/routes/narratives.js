@@ -27,7 +27,7 @@ router.post('/:workstream_id/generate', async (req, res) => {
     }
 
     const articles = await db.all(`SELECT headline, outlet, author, publish_date, cl_sentiment_score, cl_topics, cl_key_entities, cl_key_takeaway, cl_firms_mentioned
-      FROM articles WHERE workstream_id = ? AND cl_status IN ('classified','approved') AND publish_date >= ? AND publish_date <= ? ORDER BY publish_date ASC`,
+      FROM articles WHERE workstream_id = ? AND cl_status = 'classified' AND publish_date >= ? AND publish_date <= ? ORDER BY publish_date ASC`,
       workstream_id, from || '2000-01-01', to || '2099-12-31');
 
     if (articles.length === 0) return res.json({ error: 'No articles in date range' });

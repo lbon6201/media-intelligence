@@ -11,10 +11,10 @@ router.post('/:workstream_id/generate', async (req, res) => {
   const ws = await db.get('SELECT * FROM workstreams WHERE id = ?', workstream_id);
   if (!ws) return res.status(404).json({ error: 'Workstream not found' });
 
-  const articles = await db.all(`SELECT * FROM articles WHERE workstream_id = ? AND cl_status = 'approved' AND publish_date >= ? AND publish_date <= ? ORDER BY publish_date DESC`,
+  const articles = await db.all(`SELECT * FROM articles WHERE workstream_id = ? AND cl_status = 'classified' AND publish_date >= ? AND publish_date <= ? ORDER BY publish_date DESC`,
     workstream_id, from || '2000-01-01', to || '2099-12-31');
 
-  if (articles.length === 0) return res.status(400).json({ error: 'No approved articles in date range' });
+  if (articles.length === 0) return res.status(400).json({ error: 'No classified articles in date range' });
 
   const maxRef = max_articles_referenced || 20;
   const selected = articles.slice(0, maxRef);

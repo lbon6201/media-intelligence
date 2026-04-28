@@ -31,6 +31,7 @@ import parseArticleRoutes from './routes/parseArticles.js';
 import extractQuoteRoutes from './routes/extractQuotes.js';
 import driftRoutes from './routes/drift.js';
 import activityRoutes from './routes/activity.js';
+import clipsRoutes from './routes/clips.js';
 
 const app = express();
 app.use(cors());
@@ -60,6 +61,7 @@ app.use('/api/network', authenticate, networkRoutes);
 app.use('/api/calendar', authenticate, calendarRoutes);
 app.use('/api/drift', authenticate, driftRoutes);
 app.use('/api/activity', activityRoutes);
+app.use('/api/clips', authenticate, clipsRoutes);
 app.use('/api/articles/parse', authenticate, parseArticleRoutes);
 app.use('/api/extract-quotes', authenticate, extractQuoteRoutes);
 

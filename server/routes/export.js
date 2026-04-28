@@ -72,8 +72,8 @@ function sentimentLabel(score) {
 
 router.get('/:workstream_id/excel', async (req, res) => {
   const wsId = req.params.workstream_id;
-  const articles = await db.all('SELECT * FROM articles WHERE workstream_id = ? AND cl_status IN (?, ?) ORDER BY publish_date DESC',
-    wsId, 'classified', 'approved');
+  const articles = await db.all('SELECT * FROM articles WHERE workstream_id = ? AND cl_status = ? ORDER BY publish_date DESC',
+    wsId, 'classified');
 
   const wb = XLSX.utils.book_new();
 
@@ -302,7 +302,7 @@ router.get('/:workstream_id/articles-doc', async (req, res) => {
   const ws = await db.get('SELECT * FROM workstreams WHERE id = ?', wsId);
   if (!ws) return res.status(404).json({ error: 'Workstream not found' });
 
-  let sql = `SELECT * FROM articles WHERE workstream_id = ? AND cl_status IN ('classified', 'approved')`;
+  let sql = `SELECT * FROM articles WHERE workstream_id = ? AND cl_status = 'classified'`;
   const params = [wsId];
   if (status) { sql += ' AND cl_status = ?'; params.push(status); }
   if (topic) { sql += ' AND cl_topics LIKE ?'; params.push(`%${topic}%`); }
