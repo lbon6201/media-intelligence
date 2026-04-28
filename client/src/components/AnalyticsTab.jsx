@@ -318,6 +318,178 @@ export default function AnalyticsTab({ workstream }) {
             </div>
           )}
 
+          {/* Firm Sentiment Over Time */}
+          {(() => {
+            const topFirms = firms.slice(0, 5);
+            if (topFirms.length === 0 || trendDays.length < 2) return null;
+            const firmTrends = topFirms.map(f => {
+              const points = trendDays.map(d => {
+                const dayArts = filteredArticles.filter(a => getTimeKey(a.publish_date) === d.key && (a.cl_firms_mentioned || []).includes(f.name));
+                const sents = dayArts.map(a => (a.cl_firm_sentiments || {})[f.name] || a.cl_sentiment_score).filter(Boolean);
+                return { key: d.key, avg: sents.length > 0 ? +(sents.reduce((x, y) => x + y, 0) / sents.length).toFixed(1) : null, count: dayArts.length };
+              }).filter(p => p.avg !== null);
+              return { name: f.name, points };
+            }).filter(ft => ft.points.length > 1);
+            if (firmTrends.length === 0) return null;
+            const allPoints = firmTrends.flatMap(ft => ft.points);
+            const minSent = Math.min(...allPoints.map(p => p.avg));
+            const maxSent = Math.max(...allPoints.map(p => p.avg));
+            const range = maxSent - minSent || 1;
+            const colors = ['#0057b8', '#dc2626', '#16a34a', '#d97706', '#7c3aed'];
+            return (
+              <div className="border rounded-lg p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+                <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Firm Sentiment Over Time</h3>
+                <div className="relative" style={{ height: 160 }}>
+                  {firmTrends.map((ft, fi) => {
+                    const pathPoints = ft.points.map((p, pi) => {
+                      const x = ft.points.length > 1 ? (pi / (ft.points.length - 1)) * 100 : 50;
+                      const y = 100 - ((p.avg - minSent) / range) * 80 - 10;
+                      return `${x},${y}`;
+                    });
+                    return (
+                      <svg key={fi} className="absolute inset-0 w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+                        <polyline points={pathPoints.join(' ')} fill="none" stroke={colors[fi % colors.length]} strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+                      </svg>
+                    );
+                  })}
+                </div>
+                <div className="flex gap-4 mt-2">
+                  {firmTrends.map((ft, fi) => (
+                    <span key={fi} className="text-xs flex items-center gap-1">
+                      <span className="inline-block w-3 h-0.5" style={{ background: colors[fi % colors.length] }} />
+                      {ft.name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Theme Sentiment Over Time */}
+          {(() => {
+            const topThemes2 = themeEntries.slice(0, 5).map(([t]) => t);
+            if (topThemes2.length === 0 || trendDays.length < 2) return null;
+            const themeTrends = topThemes2.map(theme => {
+              const points = trendDays.map(d => {
+                const dayArts = filteredArticles.filter(a => getTimeKey(a.publish_date) === d.key && (a.cl_topics || []).includes(theme));
+                const sents = dayArts.map(a => a.cl_sentiment_score).filter(Boolean);
+                return { key: d.key, avg: sents.length > 0 ? +(sents.reduce((x, y) => x + y, 0) / sents.length).toFixed(1) : null, count: dayArts.length };
+              }).filter(p => p.avg !== null);
+              return { name: theme, points };
+            }).filter(tt => tt.points.length > 1);
+            if (themeTrends.length === 0) return null;
+            const allPts = themeTrends.flatMap(tt => tt.points);
+            const mn = Math.min(...allPts.map(p => p.avg));
+            const mx = Math.max(...allPts.map(p => p.avg));
+            const rng = mx - mn || 1;
+            const colors = ['#0057b8', '#dc2626', '#16a34a', '#d97706', '#7c3aed'];
+            return (
+              <div className="border rounded-lg p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+                <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Theme Sentiment Over Time</h3>
+                <div className="relative" style={{ height: 160 }}>
+                  {themeTrends.map((tt, ti) => {
+                    const pathPoints = tt.points.map((p, pi) => {
+                      const x = tt.points.length > 1 ? (pi / (tt.points.length - 1)) * 100 : 50;
+                      const y = 100 - ((p.avg - mn) / rng) * 80 - 10;
+                      return `${x},${y}`;
+                    });
+                    return (
+                      <svg key={ti} className="absolute inset-0 w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+                        <polyline points={pathPoints.join(' ')} fill="none" stroke={colors[ti % colors.length]} strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+                      </svg>
+                    );
+                  })}
+                </div>
+                <div className="flex gap-4 mt-2 flex-wrap">
+                  {themeTrends.map((tt, ti) => (
+                    <span key={ti} className="text-xs flex items-center gap-1">
+                      <span className="inline-block w-3 h-0.5" style={{ background: colors[ti % colors.length] }} />
+                      {tt.name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Outlet Tone Matrix */}
+          {(() => {
+            const topOutlets = outlets.slice(0, 8);
+            const topThemes3 = themeEntries.slice(0, 6).map(([t]) => t);
+            if (topOutlets.length === 0 || topThemes3.length === 0) return null;
+            return (
+              <div className="border rounded-lg p-4 overflow-x-auto" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+                <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Outlet × Theme Sentiment</h3>
+                <table className="text-xs w-full">
+                  <thead>
+                    <tr>
+                      <th className="px-2 py-1.5 text-left font-medium" style={{ color: 'var(--text-muted)' }}>Outlet</th>
+                      {topThemes3.map(t => <th key={t} className="px-2 py-1.5 text-center font-medium min-w-[70px]" style={{ color: 'var(--text-muted)' }}>{t}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {topOutlets.map(o => (
+                      <tr key={o.name} className="border-t" style={{ borderColor: 'var(--border)' }}>
+                        <td className="px-2 py-1.5 font-medium" style={{ color: 'var(--text-primary)' }}>{o.name}</td>
+                        {topThemes3.map(t => {
+                          const cellArts = filteredArticles.filter(a => (a.outlet || '') === o.name && (a.cl_topics || []).includes(t));
+                          if (cellArts.length === 0) return <td key={t} className="px-2 py-1.5 text-center" style={{ color: 'var(--text-muted)' }}>—</td>;
+                          const avg = +(cellArts.reduce((s, a) => s + (a.cl_sentiment_score || 0), 0) / cellArts.length).toFixed(1);
+                          return (
+                            <td key={t} className="px-2 py-1.5 text-center" style={{ backgroundColor: `${sentimentDot(Math.round(avg))}20` }}>
+                              <span className={`font-bold ${sentimentColor(Math.round(avg))}`}>{avg}</span>
+                              <span className="ml-0.5" style={{ color: 'var(--text-muted)' }}>({cellArts.length})</span>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })()}
+
+          {/* Emerging Narratives */}
+          {(() => {
+            // Detect themes that are new or spiking in the most recent period
+            if (trendDays.length < 3) return null;
+            const recentKeys = trendDays.slice(-Math.ceil(trendDays.length * 0.3)).map(d => d.key);
+            const olderKeys = trendDays.slice(0, -Math.ceil(trendDays.length * 0.3)).map(d => d.key);
+            const recentThemes = {};
+            const olderThemes = {};
+            filteredArticles.forEach(a => {
+              const key = getTimeKey(a.publish_date);
+              if (!key) return;
+              (a.cl_topics || []).forEach(t => {
+                if (recentKeys.includes(key)) recentThemes[t] = (recentThemes[t] || 0) + 1;
+                if (olderKeys.includes(key)) olderThemes[t] = (olderThemes[t] || 0) + 1;
+              });
+            });
+            const emerging = Object.entries(recentThemes)
+              .filter(([t, count]) => count >= 2 && (!olderThemes[t] || count / (olderThemes[t] / Math.max(olderKeys.length, 1) * recentKeys.length) > 1.5))
+              .sort((a, b) => b[1] - a[1])
+              .slice(0, 5);
+            if (emerging.length === 0) return null;
+            return (
+              <div className="border rounded-lg p-4" style={{ borderColor: '#FDE68A', background: '#FFFBEB' }}>
+                <h3 className="text-sm font-semibold mb-2" style={{ color: '#92400E' }}>Emerging Narratives</h3>
+                <div className="space-y-1">
+                  {emerging.map(([theme, count]) => {
+                    const isNew = !olderThemes[theme];
+                    return (
+                      <div key={theme} className="flex items-center gap-2 text-xs">
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold" style={{ background: isNew ? '#DC2626' : '#D97706', color: 'white' }}>{isNew ? 'NEW' : 'TRENDING'}</span>
+                        <span style={{ color: '#78350F' }}>{theme}</span>
+                        <span style={{ color: '#92400E' }}>({count} recent articles)</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Theme Breakdown */}
           <div className="bg-white border border-[#b8cce0] rounded-lg p-4">
             <h3 className="text-sm font-semibold text-[#002855] mb-3">Theme Breakdown</h3>
