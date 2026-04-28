@@ -219,14 +219,14 @@ async function generateClipsSummary(articles, workstream, headerConfig) {
 
   const systemPrompt = [
     'You are a media intelligence analyst at a strategic communications firm.',
-    'Write an internal media coverage summary for a client.',
+    'Write an internal media coverage report for a client.',
     'Professional, concise, third-person tone. Plain text only — no markdown.',
     '',
     'Return a JSON object with two fields:',
     '',
-    '"summary": A concise 1-2 paragraph narrative summary. State which outlets covered the topic and the overall thrust of coverage. Mention the client by name where relevant. If a particular quote from the articles is especially noteworthy or revealing, include it inline (with attribution) — but only do this when a quote genuinely stands out. Do not force quotes into the summary if none are remarkable.',
+    '"summary": A concise report of the key coverage and commentary from the articles provided. Highlight key moments — significant statements, policy shifts, notable quotes from influential figures (include inline with attribution when genuinely revealing, but do not force them). Track emerging themes across the coverage. Include a brief sentiment read — whether coverage is trending positive, negative, or mixed, and note any shifts. Flag any items that warrant immediate attention from the client (e.g., negative tier-1 coverage, inaccurate reporting, emerging crises, or unexpected angles). Keep to 2-3 short paragraphs. Mention the client by name where relevant. Reference specific outlets when noting key developments.',
     '',
-    '"key_narratives": An array of 3-5 strings. Each is one sentence identifying a critical theme or narrative thread in the coverage.',
+    '"key_narratives": An array of 3-5 strings. Each is one sentence identifying a critical theme or narrative thread emerging from the coverage.',
     '',
     'Return ONLY valid JSON. No backticks, no preamble.',
   ].join('\n');
