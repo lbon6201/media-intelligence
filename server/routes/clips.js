@@ -15,75 +15,98 @@ function cleanArticleText(text) {
 
   let cleaned = text;
 
+  // --- Pre-processing: strip HTML/markup ---
+  cleaned = cleaned
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')   // script blocks
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')     // style blocks
+    .replace(/<[^>]+>/g, ' ')                            // all HTML tags → space
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ').replace(/&#\d+;/g, '')     // HTML entities
+    .replace(/\u00A0/g, ' ')                             // non-breaking space
+    .replace(/[\u200B-\u200D\uFEFF\u200E\u200F]/g, '')  // zero-width chars
+    .replace(/[\u2018\u2019]/g, "'")                     // smart quotes → straight
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/\u2014/g, ' — ').replace(/\u2013/g, ' – ') // em/en dashes
+    .replace(/\u2026/g, '...')                           // ellipsis
+    .replace(/\[([^\]]{0,40})\]/g, (m, inner) => {      // strip short brackets [Photo] [1] etc
+      if (/^[\d,\s]+$/.test(inner)) return '';           // footnote refs [1] [2,3]
+      if (/photo|image|video|chart|figure|caption|source|related|read more|sign up|subscribe/i.test(inner)) return '';
+      return m; // keep meaningful brackets like [SEC] or quoted text
+    })
+    .replace(/\{[^}]{0,30}\}/g, '')                     // curly brace artifacts
+    .replace(/\t/g, ' ');                                // tabs → spaces
+
   // --- Line-level noise removal ---
   const lineNoisePatterns = [
-    // Web UI chrome
+    // Web UI chrome / navigation
     /^(home|menu|search|sign\s*in|log\s*in|subscribe|register|newsletter)\s*$/i,
     /^(share|tweet|email|print|save|bookmark|comment|follow\s+us)\s*$/i,
-    /^(facebook|twitter|linkedin|instagram|youtube|tiktok|whatsapp|reddit)\s*$/i,
+    /^(facebook|twitter|linkedin|instagram|youtube|tiktok|whatsapp|reddit|x\.com)\s*$/i,
     /^(previous|next|related|more\s+from|recommended|trending|popular|most\s+read)\b.*$/i,
     /^(advertisement|sponsored|promoted|ad|advert)\s*$/i,
-    /^(skip\s+to|jump\s+to|go\s+to|back\s+to)\s+.*$/i,
+    /^(skip\s+to|jump\s+to|go\s+to|back\s+to)\s+/i,
     /^(accept|reject|manage|customize)\s*(all\s*)?(cookies?)?\s*$/i,
     /^(continue\s+reading|read\s+more|show\s+more|load\s+more|see\s+all)\s*$/i,
-    /^(sign\s+up|subscribe|get\s+access|unlock|premium|member).*$/i,
+    /^(sign\s+up|subscribe|get\s+access|unlock|premium|member)/i,
     /^(close|dismiss|got\s+it|no\s+thanks|maybe\s+later|not\s+now)\s*$/i,
-    /^(photo|image|video|audio|graphic|chart|illustration|source)\s*:.*$/i,
-    /^(getty|reuters|ap|afp|bloomberg)\s*(images?|photos?)?\s*$/i,
-    /^\d+\s*(min|minute|hour|sec|second)s?\s*(read|ago|left)\s*$/i,
-    /^(updated?|modified|edited)\s*:?\s*$/i,
-    /^(tags?|topics?|categories?|section|filed\s+under)\s*:?\s*$/i,
-    // Legal / copyright
-    /^copyright\s.*/i, /©.*/, /all\s+rights\s+reserved.*/i,
-    /terms\s+(of\s+)?(use|service).*/i, /privacy\s+policy.*/i,
-    /cookie\s+(policy|preferences|settings).*/i,
-    // Separators
-    /^\s*\|+\s*$/, /^\s*-{3,}\s*$/, /^\s*={3,}\s*$/, /^\s*_{3,}\s*$/,
-    // Factiva artifacts
-    /^page\s+\d+\s+of\s+\d+\s*$/i, /^factiva\s*$/i, /^dow\s*jones.*$/i,
-    /^document\s+[a-z0-9]{10,}\s*$/i,
-    /^(se|hd|by|cr|pd|sn|sc|la|cy|lp|td|rf|co|in|ns|re|ipc)\s*$/i,
-    // Additional web artifacts
     /^(listen|watch|download)\s*(to|the)?\s*(podcast|video|app|episode)/i,
     /^(click|tap|swipe)\s+(here|to|for)/i,
-    /^\s*\[.*?\]\s*$/, // bracketed text like [Image] [Video]
+    /^(up\s+next|now\s+playing|watch\s+next)\s*$/i,
     /^(most\s+popular|top\s+stories|editors?\s*picks?)\s*$/i,
     /^(free|limited)\s+(article|access|trial)/i,
     /^already\s+(a\s+)?(subscriber|member)/i,
-    /^this\s+(article|story|content)\s+(is|was)\s+(published|produced|provided)/i,
-    /^(reporting|reporting\s+by|editing\s+by|compiled\s+by)\s+.+$/i,
-    /^our\s+standards?\s*:/i,
-    /^\s*\d+\s*\/\s*\d+\s*$/, // "1/5" slide indicators
-    /^(up\s+next|now\s+playing|watch\s+next)\s*$/i,
-    /^\s*https?:\/\/\S+\s*$/, // bare URLs on their own line
-    /^(photo|credit|caption)\s*:?\s*.{0,30}$/i,
-    /^(file\s+photo|stock\s+image|handout)/i,
     /^(morning|evening|daily)\s+(brief|briefing|digest|newsletter)/i,
+    // Media / image credits
+    /^(photo|image|video|audio|graphic|chart|illustration|source)\s*:/i,
+    /^(getty|reuters|ap|afp|bloomberg|associated press)\s*(images?|photos?)?\s*$/i,
+    /^(photo|credit|caption)\s*:?\s*.{0,40}$/i,
+    /^(file\s+photo|stock\s+image|handout|courtesy)/i,
+    /^\d+\s*(min|minute|hour|sec|second)s?\s*(read|ago|left)\s*$/i,
+    /^(updated?|modified|edited|published)\s*:?\s*$/i,
+    /^(tags?|topics?|categories?|section|filed\s+under)\s*:?\s*$/i,
+    // Legal / copyright / footer
+    /^copyright\s/i, /©/, /all\s+rights\s+reserved/i,
+    /^terms\s+(of\s+)?(use|service)/i, /^privacy\s+policy/i,
+    /^cookie\s+(policy|preferences|settings)/i,
+    /^our\s+standards?\s*:/i,
+    /^this\s+(article|story|content)\s+(is|was)\s+(published|produced|provided|updated)/i,
+    /^(reporting|reported)\s+by\s+.+;\s*(editing|writing)\s+by/i,
+    /^(additional\s+reporting|editing)\s+by\s+/i,
+    /^compiled\s+by\s+/i,
+    // Separators and junk
+    /^\s*\|+\s*$/, /^\s*-{3,}\s*$/, /^\s*={3,}\s*$/, /^\s*_{3,}\s*$/,
+    /^\s*\*{3,}\s*$/,
+    /^\s*\d+\s*\/\s*\d+\s*$/, // "1/5" slide indicators
+    /^\s*https?:\/\/\S+\s*$/, // bare URLs on their own line
+    // Factiva artifacts
+    /^page\s+\d+\s+of\s+\d+\s*$/i, /^factiva\s*$/i, /^dow\s*jones/i,
+    /^document\s+[a-z0-9]{10,}\s*$/i,
+    /^(se|hd|by|cr|pd|sn|sc|la|cy|lp|td|rf|co|in|ns|re|ipc)\s*$/i,
+    /^\d+\s*words?\s*$/i,
+    // Social/sharing prompts
+    /^share\s+this\s+(article|story|post)/i,
+    /^(follow|like|retweet|repost)\s+(us|me|this)/i,
+    /^get\s+(the\s+)?(latest|our|free)/i,
+    /^(enter|type)\s+your\s+email/i,
+    /^you\s+(may|might)\s+also\s+(like|enjoy|be\s+interested)/i,
+    /^don.t\s+miss/i,
   ];
 
   cleaned = cleaned.split('\n').filter(line => {
     const t = line.trim();
     if (!t) return true; // keep blank lines for paragraph structure
-    if (t.length <= 2) return false; // single chars, bullets
+    if (t.length <= 2) return false; // single chars, bullets, stray punctuation
+    // ALL CAPS short lines are usually nav/headers (e.g., "MARKETS", "OPINION")
+    if (/^[A-Z\s]{1,25}$/.test(t) && t.length < 20) return false;
     return !lineNoisePatterns.some(p => p.test(t));
   }).join('\n');
 
-  // --- Inline artifact removal ---
+  // --- Post-processing ---
   cleaned = cleaned
-    .replace(/\[[\s\S]{0,30}?\]/g, '') // short bracketed content like [Photo], [1], [Read more]
-    .replace(/\{[\s\S]{0,30}?\}/g, '') // curly brace artifacts
-    .replace(/<[^>]+>/g, '')           // any stray HTML tags
-    .replace(/&(amp|lt|gt|quot|nbsp|#\d+);?/g, m => { // HTML entities
-      const map = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&nbsp;': ' ' };
-      return map[m] || '';
-    })
-    .replace(/\u00A0/g, ' ')           // non-breaking spaces
-    .replace(/[\u200B-\u200D\uFEFF]/g, '') // zero-width chars
-    .replace(/\t/g, ' ')               // tabs to spaces
-    .replace(/ {3,}/g, '  ');          // collapse excessive spaces
-
-  // Collapse excessive blank lines
-  cleaned = cleaned.replace(/\n{4,}/g, '\n\n\n');
+    .replace(/ {2,}/g, ' ')            // collapse multiple spaces
+    .replace(/\n{4,}/g, '\n\n\n')      // collapse excessive blank lines
+    .replace(/^\s+|\s+$/gm, line => line.replace(/[^\n]/g, '')); // trim each line
 
   return cleaned.trim();
 }
@@ -185,31 +208,35 @@ function formatShortDate(dateStr) {
   }
 }
 
-// Search for an article URL using headline + outlet
+// Search for an article URL using Brave Search
 async function searchArticleUrl(headline, outlet) {
   try {
     const query = `${headline} ${outlet || ''}`.trim();
     const encoded = encodeURIComponent(query);
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
+    const timeout = setTimeout(() => controller.abort(), 10000);
     const res = await fetch(
-      `https://html.duckduckgo.com/html/?q=${encoded}`,
+      `https://search.brave.com/search?q=${encoded}`,
       {
         signal: controller.signal,
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MediaIntelBot/1.0)' },
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html',
+        },
       }
     );
     clearTimeout(timeout);
     const html = await res.text();
-    // Extract first result URL from DuckDuckGo HTML
-    const match = html.match(/class="result__a" href="([^"]+)"/);
-    if (match) {
-      let url = match[1];
-      // DuckDuckGo wraps URLs in a redirect — extract the actual URL
-      const udMatch = url.match(/uddg=([^&]+)/);
-      if (udMatch) url = decodeURIComponent(udMatch[1]);
-      // Basic validation — must be http(s)
-      if (/^https?:\/\//.test(url)) return url;
+
+    // Extract external links — skip Brave's own domains and image CDNs
+    const skipDomains = /search\.brave\.com|brave\.com|imgs\.search\.brave|tiles\.search\.brave|cdn\.search\.brave/;
+    const linkMatches = [...html.matchAll(/href="(https?:\/\/[^"]+)"/g)];
+    for (const m of linkMatches) {
+      const url = m[1];
+      if (skipDomains.test(url)) continue;
+      if (/\.(png|jpg|jpeg|gif|svg|ico|css|js)(\?|$)/i.test(url)) continue;
+      // Return the first real result URL
+      return url;
     }
   } catch (e) {
     console.log(`URL search failed for "${headline}": ${e.message}`);
@@ -353,15 +380,24 @@ function buildClipsDoc(articles, workstream, headerConfig, aiResult) {
       ]}));
     }
 
-    // Full article text — cleaned and properly paragraphed
+    // Full article text — cleaned and split into proper paragraphs
     const cleanedText = cleanArticleText(a.full_text || '');
+    // Split on double newlines (paragraph breaks), then flow each paragraph
     const textParagraphs = cleanedText.split(/\n\s*\n/).filter(p => p.trim());
     for (const para of textParagraphs) {
-      const flowedText = para.trim().replace(/\n/g, ' ').replace(/\s{2,}/g, ' ');
-      if (!flowedText) continue;
-      children.push(new Paragraph({ spacing: { before: 60, after: 60 }, children: [
-        new TextRun({ text: flowedText, font: FONT, size: SZ_BODY, color: CLR }),
-      ]}));
+      // Join lines within a paragraph into flowing text
+      const flowedText = para.trim()
+        .split('\n')
+        .map(l => l.trim())
+        .filter(l => l.length > 0)
+        .join(' ')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+      if (!flowedText || flowedText.length < 3) continue;
+      children.push(new Paragraph({
+        spacing: { before: 80, after: 80 },
+        children: [new TextRun({ text: flowedText, font: FONT, size: SZ_BODY, color: CLR })],
+      }));
     }
   }
 
