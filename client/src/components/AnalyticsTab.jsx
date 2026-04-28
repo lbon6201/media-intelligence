@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { api } from '../api';
 import { sentimentColor, sentimentDot, formatDate, sentimentLabel, reporterStatusColor, REPORTER_STATUSES } from '../lib/helpers';
 
@@ -12,6 +12,11 @@ export default function AnalyticsTab({ workstream }) {
   const [outletSort, setOutletSort] = useState({ by: 'count', dir: 'desc' });
   const [firmSort, setFirmSort] = useState({ by: 'count', dir: 'desc' });
   const [themeSort, setThemeSort] = useState({ by: 'count', dir: 'desc' });
+  // Phase 2: Dashboard controls
+  const [timeGranularity, setTimeGranularity] = useState('day'); // day | week | month
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [sentimentDrilldown, setSentimentDrilldown] = useState(null); // 1-7 or null
 
   const load = useCallback(async () => {
     const [arts, reps] = await Promise.all([
@@ -24,50 +29,107 @@ export default function AnalyticsTab({ workstream }) {
 
   useEffect(() => { load(); }, [load]);
 
-  // Aggregations
-  const totalArticles = articles.length;
-  const avgSentiment = totalArticles > 0 ? +(articles.reduce((s, a) => s + (a.cl_sentiment_score || 0), 0) / totalArticles).toFixed(1) : 0;
-  const negShare = totalArticles > 0 ? +((articles.filter(a => a.cl_sentiment_score && a.cl_sentiment_score <= 3).length / totalArticles) * 100).toFixed(0) : 0;
+  // Date-filtered articles
+  const filteredArticles = useMemo(() => {
+    return articles.filter(a => {
+      if (dateFrom && a.publish_date && a.publish_date < dateFrom) return false;
+      if (dateTo && a.publish_date && a.publish_date > dateTo) return false;
+      return true;
+    });
+  }, [articles, dateFrom, dateTo]);
+
+  // Aggregations (use filteredArticles for dashboard)
+  const totalArticles = filteredArticles.length;
+  const avgSentiment = totalArticles > 0 ? +(filteredArticles.reduce((s, a) => s + (a.cl_sentiment_score || 0), 0) / totalArticles).toFixed(1) : 0;
+  const negShare = totalArticles > 0 ? +((filteredArticles.filter(a => a.cl_sentiment_score && a.cl_sentiment_score <= 3).length / totalArticles) * 100).toFixed(0) : 0;
 
   // Top reporter/theme
   const reporterCounts = {};
-  articles.forEach(a => { if (a.author) { reporterCounts[a.author] = (reporterCounts[a.author] || 0) + 1; } });
+  filteredArticles.forEach(a => { if (a.author) { reporterCounts[a.author] = (reporterCounts[a.author] || 0) + 1; } });
   const topReporter = Object.entries(reporterCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || '—';
 
   const themeCounts = {};
-  articles.forEach(a => { (a.cl_topics || []).forEach(t => { themeCounts[t] = (themeCounts[t] || 0) + 1; }); });
+  filteredArticles.forEach(a => { (a.cl_topics || []).forEach(t => { themeCounts[t] = (themeCounts[t] || 0) + 1; }); });
   const topTheme = Object.entries(themeCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || '—';
 
   // Sentiment distribution
   const sentDist = [0, 0, 0, 0, 0, 0, 0];
-  articles.forEach(a => { if (a.cl_sentiment_score >= 1 && a.cl_sentiment_score <= 7) sentDist[a.cl_sentiment_score - 1]++; });
-  const maxSentDist = Math.max(...sentDist, 1);
-  const SENT_DESCRIPTIONS = [
-    '1 — Very Negative: Strongly critical, accusatory, fraud/systemic risk framing',
-    '2 — Negative: Clearly skeptical or damaging framing',
-    '3 — Slightly Negative: Cautionary, mildly critical, raises concerns',
-    '4 — Neutral: Balanced or purely factual',
-    '5 — Slightly Positive: Constructive, mildly favorable',
-    '6 — Positive: Favorable coverage, highlights strengths',
-    '7 — Very Positive: Strongly supportive or promotional',
-  ];
-
-  // Trend over time: group by date, compute daily avg sentiment + volume
-  const dailyData = {};
-  articles.forEach(a => {
-    const date = a.publish_date || 'unknown';
-    if (date === 'unknown') return;
-    if (!dailyData[date]) dailyData[date] = { date, count: 0, sentSum: 0, sentCount: 0 };
-    dailyData[date].count++;
-    if (a.cl_sentiment_score) { dailyData[date].sentSum += a.cl_sentiment_score; dailyData[date].sentCount++; }
+  const sentArticles = [[], [], [], [], [], [], []]; // articles per bucket for drilldown
+  filteredArticles.forEach(a => {
+    if (a.cl_sentiment_score >= 1 && a.cl_sentiment_score <= 7) {
+      sentDist[a.cl_sentiment_score - 1]++;
+      sentArticles[a.cl_sentiment_score - 1].push(a);
+    }
   });
-  const trendDays = Object.values(dailyData).sort((a, b) => a.date.localeCompare(b.date)).map(d => ({
+  const maxSentDist = Math.max(...sentDist, 1);
+  const SENT_LABELS = ['Very Negative', 'Negative', 'Slightly Negative', 'Neutral', 'Slightly Positive', 'Positive', 'Very Positive'];
+
+  // Group by time granularity
+  function getTimeKey(dateStr) {
+    if (!dateStr) return null;
+    if (timeGranularity === 'day') return dateStr;
+    if (timeGranularity === 'week') {
+      const d = new Date(dateStr + 'T12:00:00');
+      const day = d.getDay();
+      const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+      const monday = new Date(d.setDate(diff));
+      return monday.toISOString().split('T')[0];
+    }
+    if (timeGranularity === 'month') return dateStr.slice(0, 7);
+    return dateStr;
+  }
+
+  const trendData = {};
+  filteredArticles.forEach(a => {
+    const key = getTimeKey(a.publish_date);
+    if (!key) return;
+    if (!trendData[key]) trendData[key] = { key, count: 0, sentSum: 0, sentCount: 0 };
+    trendData[key].count++;
+    if (a.cl_sentiment_score) { trendData[key].sentSum += a.cl_sentiment_score; trendData[key].sentCount++; }
+  });
+  const trendDays = Object.values(trendData).sort((a, b) => a.key.localeCompare(b.key)).map(d => ({
     ...d, avgSent: d.sentCount > 0 ? +(d.sentSum / d.sentCount).toFixed(1) : null,
   }));
   const maxDayCount = Math.max(...trendDays.map(d => d.count), 1);
 
   // Theme breakdown
   const themeEntries = Object.entries(themeCounts).sort((a, b) => b[1] - a[1]);
+
+  // Alert items: negative tier-1 articles, big sentiment shifts
+  const alertItems = useMemo(() => {
+    const alerts = [];
+    const tier1Outlets = ['The Wall Street Journal', 'Financial Times', 'Bloomberg', 'Reuters', 'The New York Times', 'The Washington Post', 'CNBC', 'Associated Press'];
+    const recentNegTier1 = filteredArticles.filter(a =>
+      a.cl_sentiment_score && a.cl_sentiment_score <= 2 && tier1Outlets.includes(a.outlet)
+    ).sort((a, b) => (b.publish_date || '').localeCompare(a.publish_date || '')).slice(0, 3);
+    recentNegTier1.forEach(a => alerts.push({ type: 'negative_tier1', text: `Negative coverage in ${a.outlet}: "${a.headline}"`, article: a }));
+
+    // Volume spike: any day with 3x average volume
+    if (trendDays.length > 3) {
+      const avgVol = trendDays.reduce((s, d) => s + d.count, 0) / trendDays.length;
+      trendDays.slice(-5).forEach(d => {
+        if (d.count >= avgVol * 3 && d.count >= 3) {
+          alerts.push({ type: 'volume_spike', text: `Volume spike on ${formatDate(d.key)}: ${d.count} articles (avg: ${avgVol.toFixed(0)})` });
+        }
+      });
+    }
+    return alerts;
+  }, [filteredArticles, trendDays]);
+
+  // Key quotes from recent articles
+  const keyQuotes = useMemo(() => {
+    const quotes = [];
+    [...filteredArticles].sort((a, b) => (b.publish_date || '').localeCompare(a.publish_date || '')).slice(0, 20).forEach(a => {
+      const ext = a.cl_external_quotes || [];
+      const int = a.cl_internal_quotes || [];
+      [...ext, ...int].forEach(q => {
+        if (q.quote && q.quote.length > 30 && q.source) {
+          quotes.push({ ...q, headline: a.headline, outlet: a.outlet, date: a.publish_date });
+        }
+      });
+    });
+    return quotes.slice(0, 5);
+  }, [filteredArticles]);
   const maxThemeCount = Math.max(...themeEntries.map(e => e[1]), 1);
 
   // Outlet aggregation
@@ -114,6 +176,34 @@ export default function AnalyticsTab({ workstream }) {
 
       {sub === 'Dashboard' && (
         <div className="space-y-4">
+          {/* Controls: date range + granularity */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-1.5 text-sm" style={{ color: 'var(--text-muted)' }}>
+              <input type="date" className="border rounded px-2 py-1.5 text-sm" style={{ borderColor: 'var(--border)' }} value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+              <span>to</span>
+              <input type="date" className="border rounded px-2 py-1.5 text-sm" style={{ borderColor: 'var(--border)' }} value={dateTo} onChange={e => setDateTo(e.target.value)} />
+              {(dateFrom || dateTo) && <button onClick={() => { setDateFrom(''); setDateTo(''); }} className="text-xs hover:underline" style={{ color: 'var(--accent)' }}>Clear</button>}
+            </div>
+            <div className="flex rounded-md overflow-hidden border" style={{ borderColor: 'var(--border)' }}>
+              {[['day', 'Day'], ['week', 'Week'], ['month', 'Month']].map(([val, label]) => (
+                <button key={val} onClick={() => setTimeGranularity(val)} className="px-3 py-1.5 text-xs" style={{ background: timeGranularity === val ? 'var(--accent-subtle)' : 'var(--bg-card)', color: timeGranularity === val ? 'var(--accent)' : 'var(--text-muted)' }}>{label}</button>
+              ))}
+            </div>
+            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{totalArticles} articles</span>
+          </div>
+
+          {/* Alert Banner */}
+          {alertItems.length > 0 && (
+            <div className="border rounded-lg p-3 space-y-1.5" style={{ background: '#FEF2F2', borderColor: '#FECACA' }}>
+              <h3 className="text-xs font-semibold" style={{ color: '#991B1B' }}>Attention Required</h3>
+              {alertItems.map((a, i) => (
+                <p key={i} className="text-xs" style={{ color: '#991B1B' }}>
+                  {a.type === 'negative_tier1' ? '⚠ ' : '📈 '}{a.text}
+                </p>
+              ))}
+            </div>
+          )}
+
           {/* KPI Row */}
           <div className="grid grid-cols-5 gap-3">
             <KPI label="Total Articles" value={totalArticles} />
@@ -123,28 +213,26 @@ export default function AnalyticsTab({ workstream }) {
             <KPI label="Top Theme" value={topTheme} small />
           </div>
 
-          {/* Sentiment Distribution — larger, with hover tooltips */}
+          {/* Sentiment Distribution — clickable bars for drilldown */}
           <div className="card p-4">
             <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Sentiment Distribution</h3>
             <div className="flex items-end gap-3" style={{ height: 200 }}>
               {sentDist.map((count, i) => {
                 const barHeight = maxSentDist > 0 ? Math.max((count / maxSentDist) * 180, count > 0 ? 6 : 0) : 0;
                 return (
-                  <div key={i} className="flex-1 group relative" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center', height: '100%' }}>
-                    {/* Tooltip */}
-                    <div className="absolute bottom-full mb-2 hidden group-hover:block z-10" style={{ width: 240, left: '50%', transform: 'translateX(-50%)' }}>
+                  <div key={i} className="flex-1 group relative cursor-pointer" onClick={() => setSentimentDrilldown(sentimentDrilldown === i + 1 ? null : i + 1)} style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center', height: '100%' }}>
+                    <div className="absolute bottom-full mb-2 hidden group-hover:block z-10" style={{ width: 200, left: '50%', transform: 'translateX(-50%)' }}>
                       <div className="rounded-lg px-3 py-2 text-xs shadow-lg" style={{ background: 'var(--bg-primary)', color: 'var(--text-inverse)' }}>
-                        <p className="font-semibold">{SENT_DESCRIPTIONS[i]}</p>
-                        <p className="mt-1 font-mono">{count} article{count !== 1 ? 's' : ''} ({totalArticles > 0 ? Math.round((count / totalArticles) * 100) : 0}%)</p>
+                        <p className="font-semibold">{i + 1} — {SENT_LABELS[i]}</p>
+                        <p className="mt-1">{count} article{count !== 1 ? 's' : ''} ({totalArticles > 0 ? Math.round((count / totalArticles) * 100) : 0}%)</p>
+                        <p className="mt-0.5 opacity-70">Click to view articles</p>
                       </div>
                     </div>
-                    {/* Bar — using pixel height */}
-                    <div className="w-full rounded-t cursor-pointer transition-all hover:opacity-80" style={{ height: barHeight, backgroundColor: sentimentDot(i + 1) }} />
+                    <div className={`w-full rounded-t transition-all ${sentimentDrilldown === i + 1 ? 'ring-2 ring-offset-1 ring-[#0057b8]' : 'hover:opacity-80'}`} style={{ height: barHeight, backgroundColor: sentimentDot(i + 1) }} />
                   </div>
                 );
               })}
             </div>
-            {/* Labels row */}
             <div className="flex gap-3 mt-2">
               {sentDist.map((count, i) => (
                 <div key={i} className="flex-1 text-center">
@@ -154,40 +242,78 @@ export default function AnalyticsTab({ workstream }) {
               ))}
             </div>
             <div className="flex justify-between mt-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>
-              <span>← Negative</span>
-              <span>Neutral</span>
-              <span>Positive →</span>
+              <span>← Negative</span><span>Neutral</span><span>Positive →</span>
             </div>
           </div>
 
-          {/* Trend Over Time — volume bars + sentiment line */}
+          {/* Sentiment Drilldown Panel */}
+          {sentimentDrilldown && (
+            <div className="border rounded-lg p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                  <span className="inline-block w-3 h-3 rounded-full mr-2" style={{ backgroundColor: sentimentDot(sentimentDrilldown) }} />
+                  {sentimentDrilldown} — {SENT_LABELS[sentimentDrilldown - 1]} ({sentArticles[sentimentDrilldown - 1].length} articles)
+                </h3>
+                <button onClick={() => setSentimentDrilldown(null)} className="text-xs hover:underline" style={{ color: 'var(--text-muted)' }}>Close</button>
+              </div>
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {sentArticles[sentimentDrilldown - 1].sort((a, b) => (b.publish_date || '').localeCompare(a.publish_date || '')).map(a => (
+                  <div key={a.id} className="flex items-center gap-3 text-xs py-1 border-b" style={{ borderColor: 'var(--border)' }}>
+                    <span className={`font-bold w-6 text-center ${sentimentColor(a.cl_sentiment_score)}`}>{a.cl_sentiment_score}</span>
+                    <span className="font-medium flex-1 truncate" style={{ color: 'var(--text-primary)' }}>{a.headline}</span>
+                    <span style={{ color: 'var(--text-muted)' }}>{a.outlet}</span>
+                    <span style={{ color: 'var(--text-muted)' }}>{formatDate(a.publish_date)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Coverage Trend */}
           {trendDays.length > 1 && (
             <div className="card p-4">
-              <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Coverage Trend</h3>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Coverage Trend</h3>
+              </div>
               <div className="flex items-end gap-px" style={{ height: 160 }}>
                 {trendDays.map((d, i) => {
                   const barHeight = Math.max((d.count / maxDayCount) * 140, 4);
                   const barColor = d.avgSent ? sentimentDot(Math.round(d.avgSent)) : '#94A3B8';
                   return (
-                    <div key={i} className="flex-1 group relative" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center', height: '100%', minWidth: 2 }}>
-                      {/* Tooltip */}
+                    <div key={i} className="flex-1 group relative cursor-pointer" onClick={() => { setDateFrom(d.key); setDateTo(d.key); }} style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center', height: '100%', minWidth: 2 }}>
                       <div className="absolute bottom-full mb-2 hidden group-hover:block z-10" style={{ width: 180, left: '50%', transform: 'translateX(-50%)' }}>
                         <div className="rounded-lg px-3 py-2 text-xs shadow-lg" style={{ background: 'var(--bg-primary)', color: 'var(--text-inverse)' }}>
-                          <p className="font-semibold">{formatDate(d.date)}</p>
+                          <p className="font-semibold">{formatDate(d.key)}</p>
                           <p>{d.count} article{d.count !== 1 ? 's' : ''}</p>
                           {d.avgSent && <p>Avg sentiment: {d.avgSent}/7 — {sentimentLabel(Math.round(d.avgSent))}</p>}
                         </div>
                       </div>
-                      {/* Bar colored by sentiment */}
-                      <div className="w-full rounded-t cursor-pointer transition-all hover:opacity-70" style={{ height: barHeight, backgroundColor: barColor }} />
+                      <div className="w-full rounded-t transition-all hover:opacity-70" style={{ height: barHeight, backgroundColor: barColor }} />
                     </div>
                   );
                 })}
               </div>
               <div className="flex justify-between mt-2 text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
-                <span>{formatDate(trendDays[0]?.date)}</span>
-                <span>{trendDays.length} days · bars colored by avg sentiment</span>
-                <span>{formatDate(trendDays[trendDays.length - 1]?.date)}</span>
+                <span>{formatDate(trendDays[0]?.key)}</span>
+                <span>{trendDays.length} {timeGranularity === 'day' ? 'days' : timeGranularity === 'week' ? 'weeks' : 'months'} · bars colored by avg sentiment · click bar to filter</span>
+                <span>{formatDate(trendDays[trendDays.length - 1]?.key)}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Key Quotes */}
+          {keyQuotes.length > 0 && (
+            <div className="border rounded-lg p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+              <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Key Quotes</h3>
+              <div className="space-y-3">
+                {keyQuotes.map((q, i) => (
+                  <div key={i} className="text-xs">
+                    <p className="italic" style={{ color: 'var(--text-primary)' }}>"{q.quote}"</p>
+                    <p className="mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                      — {q.source}{q.role ? ` (${q.role})` : ''} · {q.outlet} · {formatDate(q.date)}
+                    </p>
+                  </div>
+                ))}
               </div>
             </div>
           )}
@@ -196,15 +322,18 @@ export default function AnalyticsTab({ workstream }) {
           <div className="bg-white border border-[#b8cce0] rounded-lg p-4">
             <h3 className="text-sm font-semibold text-[#002855] mb-3">Theme Breakdown</h3>
             <div className="space-y-2">
-              {themeEntries.slice(0, 15).map(([theme, count]) => (
-                <div key={theme} className="flex items-center gap-3">
-                  <span className="text-xs text-[#4a6080] w-48 truncate">{theme}</span>
-                  <div className="flex-1 bg-[#f0f5fb] rounded-full h-4">
-                    <div className="bg-[#0057b8] rounded-full h-4" style={{ width: `${(count / maxThemeCount) * 100}%` }} />
+              {themeEntries.slice(0, 15).map(([theme, count]) => {
+                const maxThemeCount = Math.max(...themeEntries.map(e => e[1]), 1);
+                return (
+                  <div key={theme} className="flex items-center gap-3">
+                    <span className="text-xs text-[#4a6080] w-48 truncate">{theme}</span>
+                    <div className="flex-1 bg-[#f0f5fb] rounded-full h-4">
+                      <div className="bg-[#0057b8] rounded-full h-4" style={{ width: `${(count / maxThemeCount) * 100}%` }} />
+                    </div>
+                    <span className="text-xs text-[#4a6080] w-8 text-right">{count}</span>
                   </div>
-                  <span className="text-xs text-[#4a6080] w-8 text-right">{count}</span>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 
@@ -212,7 +341,7 @@ export default function AnalyticsTab({ workstream }) {
           <div className="bg-white border border-[#b8cce0] rounded-lg p-4">
             <h3 className="text-sm font-semibold text-[#002855] mb-3">Recent Articles</h3>
             <div className="space-y-2">
-              {[...articles].sort((a, b) => (b.publish_date || '').localeCompare(a.publish_date || '')).slice(0, 10).map(a => (
+              {[...filteredArticles].sort((a, b) => (b.publish_date || '').localeCompare(a.publish_date || '')).slice(0, 10).map(a => (
                 <div key={a.id} className="flex items-center gap-3 text-xs">
                   {a.cl_sentiment_score && <span className={`font-bold w-6 text-center ${sentimentColor(a.cl_sentiment_score)}`}>{a.cl_sentiment_score}</span>}
                   <span className="text-[#002855] font-medium flex-1 truncate">{a.headline}</span>
