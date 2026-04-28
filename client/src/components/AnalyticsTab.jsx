@@ -21,6 +21,8 @@ export default function AnalyticsTab({ workstream }) {
   const [datePreset, setDatePreset] = useState('all');
   const [briefMeText, setBriefMeText] = useState('');
   const [briefMeLoading, setBriefMeLoading] = useState(false);
+  const [morningBriefDismissed, setMorningBriefDismissed] = useState(false);
+  const [selectedThemeTimeline, setSelectedThemeTimeline] = useState(null);
 
   function applyPreset(preset) {
     setDatePreset(preset);
@@ -262,6 +264,78 @@ export default function AnalyticsTab({ workstream }) {
     finally { setBriefMeLoading(false); }
   }
 
+  // Morning brief: what's new since last visit
+  const morningBrief = useMemo(() => {
+    const lastVisit = localStorage.getItem(`mip-last-visit-${workstream.id}`);
+    // Update last visit timestamp
+    localStorage.setItem(`mip-last-visit-${workstream.id}`, new Date().toISOString());
+    if (!lastVisit) return null;
+    const since = lastVisit.split('T')[0];
+    const newArts = articles.filter(a => a.ingested_at && a.ingested_at > lastVisit);
+    if (newArts.length === 0) return null;
+    const newNeg = newArts.filter(a => a.cl_sentiment_score && a.cl_sentiment_score <= 2);
+    const newOutlets = [...new Set(newArts.map(a => a.outlet).filter(Boolean))];
+    const newThemes = {};
+    newArts.forEach(a => (a.cl_topics || []).forEach(t => { newThemes[t] = (newThemes[t] || 0) + 1; }));
+    const topNewTheme = Object.entries(newThemes).sort((a, b) => b[1] - a[1])[0];
+    return { count: newArts.length, since, negCount: newNeg.length, outlets: newOutlets.slice(0, 5), topTheme: topNewTheme, negArticles: newNeg.slice(0, 2) };
+  }, [articles, workstream.id]);
+
+  // Keyword alerts from workstream config
+  const keywordAlerts = useMemo(() => {
+    const keywords = workstream.taxonomy?.keyword_triggers || workstream.alert_config?.keyword_triggers || [];
+    if (keywords.length === 0) return [];
+    const alerts = [];
+    filteredArticles.forEach(a => {
+      const text = ((a.headline || '') + ' ' + (a.cl_key_takeaway || '')).toLowerCase();
+      keywords.forEach(kw => {
+        if (text.includes(kw.toLowerCase())) {
+          alerts.push({ keyword: kw, headline: a.headline, outlet: a.outlet, date: a.publish_date, id: a.id });
+        }
+      });
+    });
+    return alerts.slice(0, 5);
+  }, [filteredArticles, workstream]);
+
+  // Narrative timeline for selected theme
+  const narrativeTimeline = useMemo(() => {
+    if (!selectedThemeTimeline) return null;
+    const weeks = {};
+    filteredArticles.filter(a => (a.cl_topics || []).includes(selectedThemeTimeline) && a.publish_date).forEach(a => {
+      const d = new Date(a.publish_date + 'T12:00:00');
+      const day = d.getDay(); d.setDate(d.getDate() - day + (day === 0 ? -6 : 1));
+      const weekKey = d.toISOString().split('T')[0];
+      if (!weeks[weekKey]) weeks[weekKey] = { week: weekKey, count: 0, sentSum: 0, sentCount: 0, articles: [] };
+      weeks[weekKey].count++;
+      if (a.cl_sentiment_score) { weeks[weekKey].sentSum += a.cl_sentiment_score; weeks[weekKey].sentCount++; }
+      weeks[weekKey].articles.push(a);
+    });
+    return Object.values(weeks).sort((a, b) => a.week.localeCompare(b.week)).map(w => ({
+      ...w, avgSent: w.sentCount > 0 ? +(w.sentSum / w.sentCount).toFixed(1) : null,
+      topArticle: w.articles.sort((a, b) => (a.cl_sentiment_score || 4) - (b.cl_sentiment_score || 4))[0],
+    }));
+  }, [filteredArticles, selectedThemeTimeline]);
+
+  // Reporter break-first from story clusters
+  const breakFirstScores = useMemo(() => {
+    const scores = {};
+    storyClusters.forEach(c => {
+      const first = c.articles[0];
+      if (first?.author) {
+        if (!scores[first.author]) scores[first.author] = { name: first.author, breaks: 0, total: 0, outlets: new Set() };
+        scores[first.author].breaks++;
+        scores[first.author].outlets.add(first.outlet);
+      }
+      c.articles.forEach(a => {
+        if (a.author) {
+          if (!scores[a.author]) scores[a.author] = { name: a.author, breaks: 0, total: 0, outlets: new Set() };
+          scores[a.author].total++;
+        }
+      });
+    });
+    return Object.values(scores).filter(s => s.total >= 2).sort((a, b) => b.breaks - a.breaks).slice(0, 15);
+  }, [storyClusters]);
+
   // Pin/unpin handler
   async function togglePin(id) {
     const a = articles.find(x => x.id === id);
@@ -361,6 +435,36 @@ export default function AnalyticsTab({ workstream }) {
       {/* ─── DASHBOARD ─── */}
       {sub === 'Dashboard' && (
         <div className="space-y-4">
+
+          {/* Morning Brief */}
+          {morningBrief && !morningBriefDismissed && (
+            <div className="rounded-lg p-3" style={{ background: '#EFF6FF', border: '1px solid #BFDBFE' }}>
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-xs font-semibold" style={{ color: '#1E40AF' }}>Since your last visit</p>
+                <button onClick={() => setMorningBriefDismissed(true)} className="text-[10px]" style={{ color: '#1E40AF' }}>Dismiss</button>
+              </div>
+              <p className="text-xs" style={{ color: '#1E3A5F' }}>
+                <strong>{morningBrief.count}</strong> new articles from {morningBrief.outlets.join(', ')}
+                {morningBrief.negCount > 0 && <> — <span style={{ color: '#DC2626' }}>{morningBrief.negCount} negative</span></>}
+                {morningBrief.topTheme && <> — top theme: <strong>{morningBrief.topTheme[0]}</strong> ({morningBrief.topTheme[1]})</>}
+              </p>
+              {morningBrief.negArticles.length > 0 && morningBrief.negArticles.map(a => (
+                <p key={a.id} className="text-[10px] mt-0.5" style={{ color: '#7F1D1D' }}>"{a.headline}" ({a.outlet})</p>
+              ))}
+            </div>
+          )}
+
+          {/* Keyword alerts */}
+          {keywordAlerts.length > 0 && (
+            <div className="rounded-lg p-3" style={{ background: '#FFF7ED', border: '1px solid #FED7AA' }}>
+              <p className="text-xs font-semibold mb-1" style={{ color: '#9A3412' }}>Keyword Matches</p>
+              {keywordAlerts.map((a, i) => (
+                <p key={i} className="text-xs" style={{ color: '#7C2D12' }}>
+                  <strong>{a.keyword}</strong> — "{a.headline}" ({a.outlet}, {formatDate(a.date)})
+                </p>
+              ))}
+            </div>
+          )}
 
           {/* Alert banner */}
           {alertItems.length > 0 && (
@@ -736,19 +840,53 @@ export default function AnalyticsTab({ workstream }) {
       />}
 
       {/* ─── THEMES ─── */}
-      {sub === 'Themes' && <SortableTable
-        data={themeEntries.map(([theme, count]) => {
-          const arts = filteredArticles.filter(a => (a.cl_topics || []).includes(theme));
-          const avg = arts.length > 0 ? +(arts.reduce((s, a) => s + (a.cl_sentiment_score || 0), 0) / arts.length).toFixed(1) : null;
-          return { name: theme, count, avg };
-        })}
-        columns={[
-          { key: 'name', label: 'Theme', render: v => <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{v}</span> },
-          { key: 'count', label: 'Articles', numeric: true },
-          { key: 'avg', label: 'Avg Sentiment', render: v => v ? <span className={sentimentColor(Math.round(v))}>{v} — {sentimentLabel(Math.round(v))}</span> : '—', numeric: true },
-        ]}
-        sort={themeSort} setSort={setThemeSort} defaultSort="count"
-      />}
+      {sub === 'Themes' && (
+        <div className="space-y-4">
+          <SortableTable
+            data={themeEntries.map(([theme, count]) => {
+              const arts = filteredArticles.filter(a => (a.cl_topics || []).includes(theme));
+              const avg = arts.length > 0 ? +(arts.reduce((s, a) => s + (a.cl_sentiment_score || 0), 0) / arts.length).toFixed(1) : null;
+              return { name: theme, count, avg };
+            })}
+            columns={[
+              { key: 'name', label: 'Theme', render: (v) => <button className="font-medium hover:underline" style={{ color: 'var(--text-primary)' }} onClick={() => setSelectedThemeTimeline(v === selectedThemeTimeline ? null : v)}>{v}</button> },
+              { key: 'count', label: 'Articles', numeric: true },
+              { key: 'avg', label: 'Avg Sentiment', render: v => v ? <span className={sentimentColor(Math.round(v))}>{v} — {sentimentLabel(Math.round(v))}</span> : '—', numeric: true },
+            ]}
+            sort={themeSort} setSort={setThemeSort} defaultSort="count"
+          />
+          {/* Narrative Timeline */}
+          {narrativeTimeline && narrativeTimeline.length > 0 && (
+            <div className="rounded-lg border p-4" style={{ borderColor: 'var(--accent)', background: 'var(--bg-card)' }}>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--accent)' }}>Narrative Timeline: {selectedThemeTimeline}</h3>
+                <button onClick={() => setSelectedThemeTimeline(null)} className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Close</button>
+              </div>
+              <div className="space-y-2">
+                {narrativeTimeline.map((w, i) => {
+                  const prevSent = i > 0 ? narrativeTimeline[i - 1].avgSent : null;
+                  const shift = prevSent && w.avgSent ? +(w.avgSent - prevSent).toFixed(1) : null;
+                  return (
+                    <div key={w.week} className="flex items-start gap-3 py-2 border-b last:border-0" style={{ borderColor: 'var(--border)' }}>
+                      <div className="text-center w-20 flex-shrink-0">
+                        <p className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>wk {formatDate(w.week)}</p>
+                        <p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{w.count} art.</p>
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          {w.avgSent && <span className={`text-sm font-bold ${sentimentColor(Math.round(w.avgSent))}`}>{w.avgSent}/7</span>}
+                          {shift && shift !== 0 && <span className="text-[10px] font-semibold" style={{ color: shift > 0 ? '#16A34A' : '#DC2626' }}>{shift > 0 ? '+' : ''}{shift}</span>}
+                        </div>
+                        {w.topArticle && <p className="text-[10px] mt-0.5 truncate" style={{ color: 'var(--text-muted)' }}>Key: "{w.topArticle.headline}" ({w.topArticle.outlet})</p>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ─── OUTLET × FIRM ─── */}
       {sub === 'Outlet × Firm' && (
@@ -833,7 +971,40 @@ export default function AnalyticsTab({ workstream }) {
         </div>
       )}
 
-      {sub === 'Engagement' && <EngagementView reporters={reporters} />}
+      {sub === 'Engagement' && (
+        <div className="space-y-4">
+          {/* Reporter Break-First */}
+          {breakFirstScores.length > 0 && (
+            <div className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+              <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-muted)' }}>Story Breakers — Who Reports First</h3>
+              <table className="text-xs w-full">
+                <thead>
+                  <tr>
+                    <th className="px-2 py-1.5 text-left font-medium" style={{ color: 'var(--text-muted)' }}>Reporter</th>
+                    <th className="px-2 py-1.5 text-left font-medium" style={{ color: 'var(--text-muted)' }}>Stories Broken</th>
+                    <th className="px-2 py-1.5 text-left font-medium" style={{ color: 'var(--text-muted)' }}>Total in Clusters</th>
+                    <th className="px-2 py-1.5 text-left font-medium" style={{ color: 'var(--text-muted)' }}>Break Rate</th>
+                    <th className="px-2 py-1.5 text-left font-medium" style={{ color: 'var(--text-muted)' }}>Outlets</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {breakFirstScores.map(s => (
+                    <tr key={s.name} className="border-t" style={{ borderColor: 'var(--border)' }}>
+                      <td className="px-2 py-1.5 font-medium" style={{ color: 'var(--text-primary)' }}>{s.name}</td>
+                      <td className="px-2 py-1.5 font-bold" style={{ color: 'var(--accent)' }}>{s.breaks}</td>
+                      <td className="px-2 py-1.5" style={{ color: 'var(--text-muted)' }}>{s.total}</td>
+                      <td className="px-2 py-1.5 font-mono" style={{ color: 'var(--text-muted)' }}>{s.total > 0 ? Math.round((s.breaks / s.total) * 100) : 0}%</td>
+                      <td className="px-2 py-1.5" style={{ color: 'var(--text-muted)' }}>{[...s.outlets].join(', ')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p className="text-[9px] mt-2" style={{ color: 'var(--text-muted)' }}>Based on {storyClusters.length} story clusters. "Broken" = first to publish within a cluster.</p>
+            </div>
+          )}
+          <EngagementView reporters={reporters} />
+        </div>
+      )}
       {sub === 'Narratives' && <NarrativesView workstream={workstream} />}
       {sub === 'Comparison' && <ComparisonView workstream={workstream} />}
     </div>
