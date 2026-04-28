@@ -1,10 +1,47 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { api } from '../api';
 import { sentimentColor, sentimentDot, formatDate, sentimentLabel, reporterStatusColor, REPORTER_STATUSES } from '../lib/helpers';
+import { BarChart, Bar, LineChart, Line, AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell, Legend, ComposedChart } from 'recharts';
 
-const SUBTABS = ['Dashboard', 'Outlets', 'Firms', 'Themes', 'Outlet × Firm', 'Speakers', 'Reporters', 'Engagement', 'Comparison', 'Narratives'];
 const SENT_LABELS = ['Very Negative', 'Negative', 'Slightly Negative', 'Neutral', 'Slightly Positive', 'Positive', 'Very Positive'];
 const CHART_COLORS = ['#0057b8', '#dc2626', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#be185d'];
+
+const NAV_GROUPS = [
+  { label: 'Overview', tabs: ['Dashboard'] },
+  { label: 'Coverage', tabs: ['Outlets', 'Firms', 'Themes', 'Outlet × Firm'] },
+  { label: 'People', tabs: ['Speakers', 'Reporters', 'Engagement'] },
+  { label: 'Analysis', tabs: ['Comparison', 'Narratives'] },
+];
+
+function Widget({ title, children, defaultOpen = true, className = '' }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className={`card ${className}`}>
+      <div className="flex items-center justify-between px-4 py-3 cursor-pointer select-none" onClick={() => setOpen(!open)} style={{ borderBottom: open ? '1px solid var(--border)' : 'none' }}>
+        <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>{title}</h3>
+        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{open ? '▾' : '▸'}</span>
+      </div>
+      {open && <div className="p-4">{children}</div>}
+    </div>
+  );
+}
+
+function LoadingSkeleton() {
+  return (
+    <div className="animate-pulse space-y-3">
+      <div className="h-4 rounded" style={{ background: 'var(--border)', width: '60%' }} />
+      <div className="h-32 rounded" style={{ background: 'var(--border-subtle, var(--border))' }} />
+    </div>
+  );
+}
+
+function EmptyState({ message = 'No data yet — classify articles to populate this section' }) {
+  return (
+    <p className="text-xs py-6 text-center" style={{ color: 'var(--text-muted)' }}>
+      {message}
+    </p>
+  );
+}
 
 export default function AnalyticsTab({ workstream }) {
   const [sub, setSub] = useState('Dashboard');
@@ -23,6 +60,7 @@ export default function AnalyticsTab({ workstream }) {
   const [briefMeLoading, setBriefMeLoading] = useState(false);
   const [morningBriefDismissed, setMorningBriefDismissed] = useState(false);
   const [selectedThemeTimeline, setSelectedThemeTimeline] = useState(null);
+  const [loaded, setLoaded] = useState(false);
 
   function applyPreset(preset) {
     setDatePreset(preset);
@@ -44,6 +82,7 @@ export default function AnalyticsTab({ workstream }) {
     ]);
     setArticles(arts.filter(a => a.cl_status === 'classified'));
     setReporters(reps);
+    setLoaded(true);
   }, [workstream.id]);
 
   useEffect(() => { load(); }, [load]);
@@ -107,7 +146,7 @@ export default function AnalyticsTab({ workstream }) {
   }));
   const maxDayCount = Math.max(...trendDays.map(d => d.count), 1);
 
-  // Outlet / Firm / Theme aggregation (must come before computed data that depends on them)
+  // Outlet / Firm / Theme aggregation
   const outletMap = {};
   filteredArticles.forEach(a => {
     const o = a.outlet || 'Unknown';
@@ -226,7 +265,6 @@ export default function AnalyticsTab({ workstream }) {
       const ws = wordSet(sorted[i].headline);
       for (let j = i + 1; j < sorted.length; j++) {
         if (assigned.has(sorted[j].id)) continue;
-        // Must be within 3 days
         if (sorted[i].publish_date && sorted[j].publish_date) {
           const diff = Math.abs(new Date(sorted[j].publish_date) - new Date(sorted[i].publish_date)) / 86400000;
           if (diff > 3) continue;
@@ -290,7 +328,6 @@ export default function AnalyticsTab({ workstream }) {
   // Morning brief: what's new since last visit
   const morningBrief = useMemo(() => {
     const lastVisit = localStorage.getItem(`mip-last-visit-${workstream.id}`);
-    // Update last visit timestamp
     localStorage.setItem(`mip-last-visit-${workstream.id}`, new Date().toISOString());
     if (!lastVisit) return null;
     const since = lastVisit.split('T')[0];
@@ -382,9 +419,7 @@ export default function AnalyticsTab({ workstream }) {
     return { total: prevTotal, avg: prevAvg, neg: prevNeg };
   }, [articles, dateFrom, dateTo]);
 
-  // (outlet/firm aggregation moved above computed data)
-
-  // Tab badge counts (use filteredArticles)
+  // Tab badge counts
   const tabBadges = useMemo(() => ({
     Dashboard: totalArticles,
     Outlets: outlets.length,
@@ -394,25 +429,63 @@ export default function AnalyticsTab({ workstream }) {
     Reporters: reporters.length,
   }), [totalArticles, outlets.length, firms.length, themeEntries.length, speakers.length, reporters.length]);
 
-  // Click-through: navigate to a tab, optionally with a search hint
+  // Click-through
   function goTo(tab) { setSub(tab); }
+
+  // Firm trend data for Recharts
+  const topFirms = firms.slice(0, 5).map(f => f.name);
+  const firmTrendData = useMemo(() => {
+    if (trendDays.length < 2 || topFirms.length === 0) return [];
+    return trendDays.map(d => {
+      const row = { key: formatDate(d.key) };
+      topFirms.forEach(f => {
+        const dayArts = filteredArticles.filter(a => getTimeKey(a.publish_date) === d.key && (a.cl_firms_mentioned || []).includes(f));
+        const sents = dayArts.map(a => (a.cl_firm_sentiments || {})[f] || a.cl_sentiment_score).filter(Boolean);
+        row[f] = sents.length > 0 ? +(sents.reduce((x, y) => x + y, 0) / sents.length).toFixed(1) : null;
+      });
+      return row;
+    });
+  }, [trendDays, topFirms, filteredArticles]);
+
+  // Theme trend data for Recharts
+  const topThemeNames = themeEntries.slice(0, 5).map(([t]) => t);
+  const themeTrendData = useMemo(() => {
+    if (trendDays.length < 2 || topThemeNames.length === 0) return [];
+    return trendDays.map(d => {
+      const row = { key: formatDate(d.key) };
+      topThemeNames.forEach(t => {
+        const dayArts = filteredArticles.filter(a => getTimeKey(a.publish_date) === d.key && (a.cl_topics || []).includes(t));
+        const sents = dayArts.map(a => a.cl_sentiment_score).filter(Boolean);
+        row[t] = sents.length > 0 ? +(sents.reduce((x, y) => x + y, 0) / sents.length).toFixed(1) : null;
+      });
+      return row;
+    });
+  }, [trendDays, topThemeNames, filteredArticles]);
+
+  // Loading state
+  if (!loaded && articles.length === 0) {
+    return (
+      <div className="space-y-4 p-4">
+        <LoadingSkeleton />
+        <LoadingSkeleton />
+        <LoadingSkeleton />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
-      {/* ─── GLOBAL FILTER BAR ─── */}
+      {/* GLOBAL FILTER BAR */}
       <div className="flex items-center gap-2 flex-wrap rounded-lg border p-2.5" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
-        {/* Quick presets */}
         <div className="flex rounded-md overflow-hidden border" style={{ borderColor: 'var(--border)' }}>
           {[['7d', '7D'], ['30d', '30D'], ['90d', '90D'], ['ytd', 'YTD'], ['all', 'All']].map(([val, label]) => (
             <button key={val} onClick={() => applyPreset(val)} className="px-2.5 py-1 text-xs font-medium transition-colors"
               style={{ background: datePreset === val ? 'var(--accent)' : 'transparent', color: datePreset === val ? 'white' : 'var(--text-muted)' }}>{label}</button>
           ))}
         </div>
-        {/* Custom date range */}
         <input type="date" className="border rounded px-2 py-1 text-xs" style={{ borderColor: 'var(--border)' }} value={dateFrom} onChange={e => { setDateFrom(e.target.value); setDatePreset(''); }} />
         <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>–</span>
         <input type="date" className="border rounded px-2 py-1 text-xs" style={{ borderColor: 'var(--border)' }} value={dateTo} onChange={e => { setDateTo(e.target.value); setDatePreset(''); }} />
-        {/* Granularity */}
         <div className="ml-auto flex rounded-md overflow-hidden border" style={{ borderColor: 'var(--border)' }}>
           {['day', 'week', 'month'].map(v => (
             <button key={v} onClick={() => setTimeGranularity(v)} className="px-2.5 py-1 text-xs capitalize transition-colors"
@@ -422,19 +495,28 @@ export default function AnalyticsTab({ workstream }) {
         <span className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>{totalArticles} articles</span>
       </div>
 
-      {/* ─── SUB-TAB BAR with badges ─── */}
-      <div className="flex gap-0.5 overflow-x-auto border-b" style={{ borderColor: 'var(--border)' }}>
-        {SUBTABS.map(s => (
-          <button key={s} onClick={() => setSub(s)}
-            className="px-3 py-2 text-xs font-medium whitespace-nowrap border-b-2 transition-colors flex items-center gap-1.5"
-            style={{ borderColor: sub === s ? 'var(--accent)' : 'transparent', color: sub === s ? 'var(--accent)' : 'var(--text-muted)' }}>
-            {s}
-            {tabBadges[s] != null && <span className="text-[9px] font-mono px-1 py-px rounded" style={{ background: sub === s ? 'var(--accent)' : 'var(--bg-content)', color: sub === s ? 'white' : 'var(--text-muted)' }}>{tabBadges[s]}</span>}
-          </button>
+      {/* GROUPED NAV BAR */}
+      <div className="flex items-end gap-0 overflow-x-auto border-b" style={{ borderColor: 'var(--border)' }}>
+        {NAV_GROUPS.map((group, gi) => (
+          <div key={group.label} className="flex items-end" style={{ borderRight: gi < NAV_GROUPS.length - 1 ? '1px solid var(--border)' : 'none' }}>
+            <div className="flex flex-col">
+              <span className="text-[9px] font-semibold uppercase tracking-wider px-3 pt-1" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>{group.label}</span>
+              <div className="flex">
+                {group.tabs.map(s => (
+                  <button key={s} onClick={() => setSub(s)}
+                    className="px-3 py-2 text-xs font-medium whitespace-nowrap border-b-2 transition-colors flex items-center gap-1.5"
+                    style={{ borderColor: sub === s ? 'var(--accent)' : 'transparent', color: sub === s ? 'var(--accent)' : 'var(--text-muted)' }}>
+                    {s}
+                    {tabBadges[s] != null && <span className="text-[9px] font-mono px-1 py-px rounded" style={{ background: sub === s ? 'var(--accent)' : 'var(--bg-content)', color: sub === s ? 'white' : 'var(--text-muted)' }}>{tabBadges[s]}</span>}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
         ))}
       </div>
 
-      {/* ─── DASHBOARD ─── */}
+      {/* DASHBOARD */}
       {sub === 'Dashboard' && (
         <div className="space-y-4">
 
@@ -485,13 +567,13 @@ export default function AnalyticsTab({ workstream }) {
             {pinnedArticles.length > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: '#FEF3C7', color: '#92400E' }}>{pinnedArticles.length} pinned</span>}
           </div>
           {briefMeText && (
-            <div className="rounded-lg border p-4" style={{ borderColor: 'var(--accent)', background: 'var(--bg-card)' }}>
+            <div className="card p-4" style={{ borderColor: 'var(--accent)' }}>
               <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--accent)' }}>AI Brief</p>
               {briefMeText.split('\n\n').map((p, i) => <p key={i} className="text-sm mb-2" style={{ color: 'var(--text-primary)' }}>{p}</p>)}
             </div>
           )}
 
-          {/* KPI row with comparative deltas */}
+          {/* KPI row */}
           <div className="grid grid-cols-5 gap-3">
             <Card label="Articles" value={totalArticles} delta={prevPeriod ? totalArticles - prevPeriod.total : null} deltaLabel="vs prev" />
             <Card label="Avg Sentiment" value={avgSentiment} sub={sentimentLabel(Math.round(avgSentiment))} delta={prevPeriod ? +(avgSentiment - prevPeriod.avg).toFixed(1) : null} deltaLabel="vs prev" invertDelta />
@@ -502,72 +584,60 @@ export default function AnalyticsTab({ workstream }) {
 
           {/* Two-column: Sentiment Distribution + Coverage Trend */}
           <div className="grid grid-cols-2 gap-4">
-            {/* Sentiment Distribution */}
-            <div className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
-              <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-muted)' }}>Sentiment Distribution</h3>
-              <div className="flex items-end gap-2" style={{ height: 140 }}>
-                {sentDist.map((count, i) => {
-                  const h = maxSentDist > 0 ? Math.max((count / maxSentDist) * 120, count > 0 ? 4 : 0) : 0;
-                  const active = sentimentDrilldown === i + 1;
-                  return (
-                    <div key={i} className="flex-1 flex flex-col justify-end items-center h-full group cursor-pointer" onClick={() => setSentimentDrilldown(active ? null : i + 1)}>
-                      <div className="absolute bottom-full mb-1 hidden group-hover:block z-10 pointer-events-none" style={{ width: 160 }}>
-                        <div className="rounded px-2 py-1 text-[10px] shadow-lg text-center" style={{ background: '#1e293b', color: 'white' }}>
-                          {SENT_LABELS[i]}: {count} ({totalArticles > 0 ? Math.round((count / totalArticles) * 100) : 0}%)
-                        </div>
-                      </div>
-                      <div className={`w-full rounded-sm transition-all ${active ? 'ring-2 ring-offset-1' : 'hover:opacity-80'}`}
-                        style={{ height: h, backgroundColor: sentimentDot(i + 1), ...(active ? { ringColor: 'var(--accent)' } : {}) }} />
-                      <span className="text-[10px] font-mono mt-1 font-semibold" style={{ color: sentimentDot(i + 1) }}>{i + 1}</span>
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="flex justify-between mt-1 text-[9px]" style={{ color: 'var(--text-muted)' }}>
-                <span>Negative</span><span>Neutral</span><span>Positive</span>
-              </div>
-            </div>
-
-            {/* Coverage Trend */}
-            <div className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
-              <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-muted)' }}>Coverage Trend</h3>
-              {trendDays.length > 1 ? (
+            <Widget title="Sentiment Distribution">
+              {totalArticles === 0 ? <EmptyState /> : (
                 <>
-                  <div className="flex items-end gap-px" style={{ height: 140 }}>
-                    {trendDays.map((d, i) => {
-                      const h = Math.max((d.count / maxDayCount) * 120, 3);
-                      const color = d.avgSent ? sentimentDot(Math.round(d.avgSent)) : '#CBD5E1';
-                      return (
-                        <div key={i} className="flex-1 group relative cursor-pointer" onClick={() => { setDateFrom(d.key); setDateTo(d.key); }}
-                          style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center', height: '100%', minWidth: 1 }}>
-                          <div className="absolute bottom-full mb-1 hidden group-hover:block z-10" style={{ width: 160, left: '50%', transform: 'translateX(-50%)' }}>
-                            <div className="rounded px-2 py-1 text-[10px] shadow-lg" style={{ background: '#1e293b', color: 'white' }}>
-                              <p className="font-semibold">{formatDate(d.key)}</p>
-                              <p>{d.count} articles{d.avgSent ? ` · ${d.avgSent}/7` : ''}</p>
-                            </div>
-                          </div>
-                          <div className="w-full rounded-sm transition-all hover:opacity-70" style={{ height: h, backgroundColor: color }} />
+                  <ResponsiveContainer width="100%" height={180}>
+                    <BarChart data={sentDist.map((count, i) => ({ name: (i + 1).toString(), count, label: SENT_LABELS[i] }))} onClick={(e) => { if (e?.activeLabel) setSentimentDrilldown(parseInt(e.activeLabel)); }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                      <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                      <YAxis tick={{ fontSize: 11 }} width={30} />
+                      <Tooltip content={({ active, payload }) => active && payload?.[0] ? (
+                        <div className="card px-3 py-2 text-xs shadow-lg">
+                          <p className="font-semibold">{payload[0].payload.label}</p>
+                          <p>{payload[0].value} articles ({totalArticles > 0 ? Math.round((payload[0].value / totalArticles) * 100) : 0}%)</p>
                         </div>
-                      );
-                    })}
-                  </div>
-                  <div className="flex justify-between mt-1 text-[9px] font-mono" style={{ color: 'var(--text-muted)' }}>
-                    <span>{formatDate(trendDays[0]?.key)}</span>
-                    <span>{formatDate(trendDays[trendDays.length - 1]?.key)}</span>
+                      ) : null} />
+                      <Bar dataKey="count" radius={[4, 4, 0, 0]} cursor="pointer">
+                        {sentDist.map((_, i) => <Cell key={i} fill={sentimentDot(i + 1)} />)}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                  <div className="flex justify-between mt-1 text-[9px]" style={{ color: 'var(--text-muted)' }}>
+                    <span>Negative</span><span>Neutral</span><span>Positive</span>
                   </div>
                 </>
-              ) : <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Not enough data</p>}
-            </div>
+              )}
+            </Widget>
+
+            <Widget title="Coverage Trend">
+              {trendDays.length <= 1 ? <EmptyState message="Not enough data for trend" /> : (
+                <ResponsiveContainer width="100%" height={200}>
+                  <ComposedChart data={trendDays.map(d => ({ ...d, date: formatDate(d.key) }))}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                    <XAxis dataKey="date" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
+                    <YAxis yAxisId="left" tick={{ fontSize: 10 }} width={30} />
+                    <YAxis yAxisId="right" orientation="right" domain={[1, 7]} tick={{ fontSize: 10 }} width={30} />
+                    <Tooltip content={({ active, payload }) => active && payload?.[0] ? (
+                      <div className="card px-3 py-2 text-xs shadow-lg">
+                        <p className="font-semibold">{payload[0].payload.date}</p>
+                        <p>{payload[0].payload.count} articles</p>
+                        {payload[0].payload.avgSent && <p>Avg sentiment: {payload[0].payload.avgSent}/7</p>}
+                      </div>
+                    ) : null} />
+                    <Bar yAxisId="left" dataKey="count" fill="var(--accent)" opacity={0.3} radius={[2, 2, 0, 0]} />
+                    <Line yAxisId="right" dataKey="avgSent" stroke="var(--accent)" strokeWidth={2} dot={false} connectNulls />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              )}
+            </Widget>
           </div>
 
           {/* Sentiment Drilldown */}
           {sentimentDrilldown && (
-            <div className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+            <Widget title={`${sentimentDrilldown} — ${SENT_LABELS[sentimentDrilldown - 1]} (${sentBucketArticles[sentimentDrilldown - 1].length})`}>
               <div className="flex items-center justify-between mb-2">
-                <h3 className="text-sm font-semibold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
-                  <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: sentimentDot(sentimentDrilldown) }} />
-                  {sentimentDrilldown} — {SENT_LABELS[sentimentDrilldown - 1]} ({sentBucketArticles[sentimentDrilldown - 1].length})
-                </h3>
+                <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: sentimentDot(sentimentDrilldown) }} />
                 <button onClick={() => setSentimentDrilldown(null)} className="text-xs" style={{ color: 'var(--text-muted)' }}>Close</button>
               </div>
               <div className="space-y-1 max-h-48 overflow-y-auto">
@@ -580,23 +650,45 @@ export default function AnalyticsTab({ workstream }) {
                   </div>
                 ))}
               </div>
-            </div>
+            </Widget>
           )}
 
           {/* Two-column: Firm Sentiment + Theme Sentiment */}
           <div className="grid grid-cols-2 gap-4">
-            <TrendChart title="Firm Sentiment" items={firms.slice(0, 5)} articles={filteredArticles} trendDays={trendDays}
-              getKey={getTimeKey} getSent={(a, name) => (a.cl_firm_sentiments || {})[name] || a.cl_sentiment_score}
-              matchFn={(a, name) => (a.cl_firms_mentioned || []).includes(name)} onLabelClick={() => goTo('Firms')} />
-            <TrendChart title="Theme Sentiment" items={themeEntries.slice(0, 5).map(([t]) => ({ name: t }))} articles={filteredArticles} trendDays={trendDays}
-              getKey={getTimeKey} getSent={(a) => a.cl_sentiment_score}
-              matchFn={(a, name) => (a.cl_topics || []).includes(name)} onLabelClick={() => goTo('Themes')} />
+            <Widget title="Firm Sentiment">
+              {firmTrendData.length < 2 || topFirms.length === 0 ? <EmptyState message="Not enough data" /> : (
+                <ResponsiveContainer width="100%" height={160}>
+                  <LineChart data={firmTrendData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                    <XAxis dataKey="key" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
+                    <YAxis domain={[1, 7]} tick={{ fontSize: 10 }} width={30} />
+                    <Tooltip />
+                    {topFirms.map((f, i) => <Line key={f} dataKey={f} stroke={CHART_COLORS[i % CHART_COLORS.length]} strokeWidth={2} dot={false} connectNulls />)}
+                    <Legend iconSize={8} wrapperStyle={{ fontSize: 10 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </Widget>
+
+            <Widget title="Theme Sentiment">
+              {themeTrendData.length < 2 || topThemeNames.length === 0 ? <EmptyState message="Not enough data" /> : (
+                <ResponsiveContainer width="100%" height={160}>
+                  <LineChart data={themeTrendData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                    <XAxis dataKey="key" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
+                    <YAxis domain={[1, 7]} tick={{ fontSize: 10 }} width={30} />
+                    <Tooltip />
+                    {topThemeNames.map((t, i) => <Line key={t} dataKey={t} stroke={CHART_COLORS[i % CHART_COLORS.length]} strokeWidth={2} dot={false} connectNulls />)}
+                    <Legend iconSize={8} wrapperStyle={{ fontSize: 10 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </Widget>
           </div>
 
           {/* Key Quotes */}
-          {keyQuotes.length > 0 && (
-            <div className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
-              <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-muted)' }}>Key Quotes</h3>
+          <Widget title="Key Quotes" defaultOpen={keyQuotes.length > 0}>
+            {keyQuotes.length === 0 ? <EmptyState message="No key quotes found" /> : (
               <div className="space-y-3">
                 {keyQuotes.map((q, i) => (
                   <div key={i}>
@@ -605,48 +697,31 @@ export default function AnalyticsTab({ workstream }) {
                   </div>
                 ))}
               </div>
-            </div>
-          )}
+            )}
+          </Widget>
 
           {/* Share of Voice */}
-          {sovData && sovData.length > 1 && (() => {
-            const topF = firms.slice(0, 6).map(f => f.name);
-            return (
-              <div className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
-                <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-muted)' }}>Share of Voice</h3>
-                <div className="flex items-end gap-px" style={{ height: 120 }}>
-                  {sovData.map((d, i) => {
-                    let yOffset = 0;
-                    return (
-                      <div key={i} className="flex-1 flex flex-col justify-end" style={{ height: '100%', minWidth: 1 }}>
-                        {topF.map((f, fi) => {
-                          const pct = d[f] || 0;
-                          const h = Math.max((pct / 100) * 110, pct > 0 ? 1 : 0);
-                          return <div key={f} style={{ height: h, backgroundColor: CHART_COLORS[fi % CHART_COLORS.length], opacity: 0.85 }} />;
-                        })}
-                      </div>
-                    );
-                  })}
-                </div>
-                <div className="flex justify-between mt-1 text-[9px] font-mono" style={{ color: 'var(--text-muted)' }}>
-                  <span>{formatDate(sovData[0]?.key)}</span>
-                  <span>{formatDate(sovData[sovData.length - 1]?.key)}</span>
-                </div>
-                <div className="flex gap-3 mt-2 flex-wrap">
-                  {topF.map((f, fi) => (
-                    <span key={f} className="text-[10px] flex items-center gap-1 cursor-pointer hover:underline" style={{ color: 'var(--text-muted)' }} onClick={() => goTo('Firms')}>
-                      <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: CHART_COLORS[fi % CHART_COLORS.length] }} />{f}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            );
-          })()}
+          <Widget title="Share of Voice" defaultOpen={!!sovData && sovData.length > 1}>
+            {!sovData || sovData.length <= 1 ? <EmptyState message="Not enough firm data for share of voice" /> : (() => {
+              const topF = firms.slice(0, 6).map(f => f.name);
+              return (
+                <ResponsiveContainer width="100%" height={180}>
+                  <AreaChart data={sovData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                    <XAxis dataKey="key" tick={{ fontSize: 10 }} tickFormatter={v => formatDate(v)} interval="preserveStartEnd" />
+                    <YAxis tick={{ fontSize: 10 }} width={30} />
+                    <Tooltip />
+                    {topF.map((f, i) => <Area key={f} type="monotone" dataKey={f} stackId="1" fill={CHART_COLORS[i % CHART_COLORS.length]} stroke={CHART_COLORS[i % CHART_COLORS.length]} fillOpacity={0.6} />)}
+                    <Legend iconSize={8} wrapperStyle={{ fontSize: 10 }} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              );
+            })()}
+          </Widget>
 
           {/* Story Clusters */}
-          {storyClusters.length > 0 && (
-            <div className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
-              <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-muted)' }}>Story Clusters ({storyClusters.length})</h3>
+          <Widget title={`Story Clusters (${storyClusters.length})`} defaultOpen={storyClusters.length > 0}>
+            {storyClusters.length === 0 ? <EmptyState message="No story clusters detected" /> : (
               <div className="space-y-2">
                 {storyClusters.slice(0, 5).map((c, i) => (
                   <div key={i} className="flex items-start gap-3 py-2 border-b last:border-0" style={{ borderColor: 'var(--border)' }}>
@@ -660,12 +735,12 @@ export default function AnalyticsTab({ workstream }) {
                   </div>
                 ))}
               </div>
-            </div>
-          )}
+            )}
+          </Widget>
 
           {/* Pinned Articles */}
           {pinnedArticles.length > 0 && (
-            <div className="rounded-lg border p-4" style={{ borderColor: '#FDE68A', background: '#FFFBEB' }}>
+            <div className="card p-4" style={{ borderColor: '#FDE68A', background: '#FFFBEB' }}>
               <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: '#92400E' }}>Pinned Articles ({pinnedArticles.length})</h3>
               <div className="space-y-1.5">
                 {pinnedArticles.sort((a, b) => (b.publish_date || '').localeCompare(a.publish_date || '')).map(a => (
@@ -682,34 +757,34 @@ export default function AnalyticsTab({ workstream }) {
 
           {/* Two-column: Outlet Tone Matrix + Emerging Narratives */}
           <div className="grid grid-cols-2 gap-4">
-            {/* Outlet × Theme */}
             {outlets.length > 0 && themeEntries.length > 0 && (
-              <div className="rounded-lg border p-4 overflow-x-auto" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
-                <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-muted)' }}>Outlet × Theme Tone</h3>
-                <table className="text-[11px] w-full">
-                  <thead>
-                    <tr>
-                      <th className="px-1.5 py-1 text-left font-medium" style={{ color: 'var(--text-muted)' }}></th>
-                      {themeEntries.slice(0, 5).map(([t]) => <th key={t} className="px-1.5 py-1 text-center font-medium" style={{ color: 'var(--text-muted)' }}>{t.length > 12 ? t.slice(0, 11) + '…' : t}</th>)}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {outlets.slice(0, 7).map(o => (
-                      <tr key={o.name} className="border-t" style={{ borderColor: 'var(--border)' }}>
-                        <td className="px-1.5 py-1 font-medium" style={{ color: 'var(--text-primary)' }}>{o.name}</td>
-                        {themeEntries.slice(0, 5).map(([t]) => {
-                          const c = filteredArticles.filter(a => a.outlet === o.name && (a.cl_topics || []).includes(t));
-                          if (!c.length) return <td key={t} className="px-1.5 py-1 text-center" style={{ color: 'var(--text-muted)' }}>—</td>;
-                          const avg = +(c.reduce((s, a) => s + (a.cl_sentiment_score || 0), 0) / c.length).toFixed(1);
-                          return <td key={t} className="px-1.5 py-1 text-center" style={{ backgroundColor: `${sentimentDot(Math.round(avg))}18` }}>
-                            <span className={`font-bold ${sentimentColor(Math.round(avg))}`}>{avg}</span>
-                          </td>;
-                        })}
+              <Widget title="Outlet × Theme Tone">
+                <div className="overflow-x-auto">
+                  <table className="text-[11px] w-full">
+                    <thead>
+                      <tr>
+                        <th className="px-1.5 py-1 text-left font-medium" style={{ color: 'var(--text-muted)' }}></th>
+                        {themeEntries.slice(0, 5).map(([t]) => <th key={t} className="px-1.5 py-1 text-center font-medium" style={{ color: 'var(--text-muted)' }}>{t.length > 12 ? t.slice(0, 11) + '...' : t}</th>)}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {outlets.slice(0, 7).map(o => (
+                        <tr key={o.name} className="border-t" style={{ borderColor: 'var(--border)' }}>
+                          <td className="px-1.5 py-1 font-medium" style={{ color: 'var(--text-primary)' }}>{o.name}</td>
+                          {themeEntries.slice(0, 5).map(([t]) => {
+                            const c = filteredArticles.filter(a => a.outlet === o.name && (a.cl_topics || []).includes(t));
+                            if (!c.length) return <td key={t} className="px-1.5 py-1 text-center" style={{ color: 'var(--text-muted)' }}>—</td>;
+                            const avg = +(c.reduce((s, a) => s + (a.cl_sentiment_score || 0), 0) / c.length).toFixed(1);
+                            return <td key={t} className="px-1.5 py-1 text-center" style={{ backgroundColor: `${sentimentDot(Math.round(avg))}18` }}>
+                              <span className={`font-bold ${sentimentColor(Math.round(avg))}`}>{avg}</span>
+                            </td>;
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Widget>
             )}
 
             {/* Emerging Narratives */}
@@ -730,7 +805,7 @@ export default function AnalyticsTab({ workstream }) {
               const emerging = Object.entries(recent).filter(([t, c]) => c >= 2 && (!older[t] || c / (older[t] / Math.max(olderKeys.size, 1) * recentKeys.size) > 1.5)).sort((a, b) => b[1] - a[1]).slice(0, 5);
               if (!emerging.length) return null;
               return (
-                <div className="rounded-lg border p-4" style={{ borderColor: '#FDE68A', background: '#FFFBEB' }}>
+                <div className="card p-4" style={{ borderColor: '#FDE68A', background: '#FFFBEB' }}>
                   <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: '#92400E' }}>Emerging Narratives</h3>
                   <div className="space-y-2">
                     {emerging.map(([theme, count]) => (
@@ -748,63 +823,66 @@ export default function AnalyticsTab({ workstream }) {
 
           {/* Theme breakdown + Recent articles side by side */}
           <div className="grid grid-cols-2 gap-4">
-            <div className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
-              <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-muted)' }}>Theme Breakdown</h3>
-              <div className="space-y-1.5">
-                {themeEntries.slice(0, 12).map(([theme, count]) => (
-                  <div key={theme} className="flex items-center gap-2">
-                    <span className="text-[11px] w-40 truncate" style={{ color: 'var(--text-muted)' }}>{theme}</span>
-                    <div className="flex-1 rounded-full h-3" style={{ background: 'var(--bg-content)' }}>
-                      <div className="rounded-full h-3" style={{ width: `${(count / maxThemeCount) * 100}%`, background: 'var(--accent)' }} />
+            <Widget title="Theme Breakdown">
+              {themeEntries.length === 0 ? <EmptyState /> : (
+                <div className="space-y-1.5">
+                  {themeEntries.slice(0, 12).map(([theme, count]) => (
+                    <div key={theme} className="flex items-center gap-2">
+                      <span className="text-[11px] w-40 truncate" style={{ color: 'var(--text-muted)' }}>{theme}</span>
+                      <div className="flex-1 rounded-full h-3" style={{ background: 'var(--bg-content)' }}>
+                        <div className="rounded-full h-3" style={{ width: `${(count / maxThemeCount) * 100}%`, background: 'var(--accent)' }} />
+                      </div>
+                      <span className="text-[11px] w-6 text-right font-mono" style={{ color: 'var(--text-muted)' }}>{count}</span>
                     </div>
-                    <span className="text-[11px] w-6 text-right font-mono" style={{ color: 'var(--text-muted)' }}>{count}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
+                  ))}
+                </div>
+              )}
+            </Widget>
 
-            <div className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
-              <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-muted)' }}>Recent Articles</h3>
-              <div className="space-y-1.5">
-                {[...filteredArticles].sort((a, b) => (b.publish_date || '').localeCompare(a.publish_date || '')).slice(0, 10).map(a => (
-                  <div key={a.id} className="flex items-center gap-2 text-[11px]">
-                    <button onClick={() => togglePin(a.id)} className="text-[10px] w-3" style={{ color: a.pinned ? '#D97706' : 'var(--text-muted)', opacity: a.pinned ? 1 : 0.3 }} title={a.pinned ? 'Unpin' : 'Pin'}>&#9733;</button>
-                    {a.cl_sentiment_score && <span className={`font-bold w-4 text-center ${sentimentColor(a.cl_sentiment_score)}`}>{a.cl_sentiment_score}</span>}
-                    <span className="flex-1 truncate" style={{ color: 'var(--text-primary)' }}>{a.headline}</span>
-                    <span style={{ color: 'var(--text-muted)' }}>{formatDate(a.publish_date)}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <Widget title="Recent Articles">
+              {filteredArticles.length === 0 ? <EmptyState /> : (
+                <div className="space-y-1.5">
+                  {[...filteredArticles].sort((a, b) => (b.publish_date || '').localeCompare(a.publish_date || '')).slice(0, 10).map(a => (
+                    <div key={a.id} className="flex items-center gap-2 text-[11px]">
+                      <button onClick={() => togglePin(a.id)} className="text-[10px] w-3" style={{ color: a.pinned ? '#D97706' : 'var(--text-muted)', opacity: a.pinned ? 1 : 0.3 }} title={a.pinned ? 'Unpin' : 'Pin'}>&#9733;</button>
+                      {a.cl_sentiment_score && <span className={`font-bold w-4 text-center ${sentimentColor(a.cl_sentiment_score)}`}>{a.cl_sentiment_score}</span>}
+                      <span className="flex-1 truncate" style={{ color: 'var(--text-primary)' }}>{a.headline}</span>
+                      <span style={{ color: 'var(--text-muted)' }}>{formatDate(a.publish_date)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Widget>
           </div>
         </div>
       )}
 
-      {/* ─── OUTLETS ─── */}
+      {/* OUTLETS */}
       {sub === 'Outlets' && (
         <div className="space-y-4">
-          <SortableTable
-            data={outlets.map(o => ({ ...o, avg: o.sentiments.length > 0 ? +(o.sentiments.reduce((a, b) => a + b, 0) / o.sentiments.length).toFixed(1) : null, reporterCount: o.reporters.size, topThemes: Object.entries(o.themes).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([n]) => n).join(', ') }))}
-            columns={[
-              { key: 'name', label: 'Outlet', render: v => <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{v}</span> },
-              { key: 'count', label: 'Articles', numeric: true },
-              { key: 'avg', label: 'Avg Sentiment', render: v => v ? <span className={sentimentColor(Math.round(v))}>{v} — {sentimentLabel(Math.round(v))}</span> : '—', numeric: true },
-              { key: 'reporterCount', label: 'Reporters', numeric: true },
-              { key: 'topThemes', label: 'Top Themes' },
-            ]}
-            sort={outletSort} setSort={setOutletSort} defaultSort="count"
-          />
+          {outlets.length === 0 ? <EmptyState /> : (
+            <SortableTable
+              data={outlets.map(o => ({ ...o, avg: o.sentiments.length > 0 ? +(o.sentiments.reduce((a, b) => a + b, 0) / o.sentiments.length).toFixed(1) : null, reporterCount: o.reporters.size, topThemes: Object.entries(o.themes).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([n]) => n).join(', ') }))}
+              columns={[
+                { key: 'name', label: 'Outlet', render: v => <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{v}</span> },
+                { key: 'count', label: 'Articles', numeric: true },
+                { key: 'avg', label: 'Avg Sentiment', render: v => v ? <span className={sentimentColor(Math.round(v))}>{v} — {sentimentLabel(Math.round(v))}</span> : '—', numeric: true },
+                { key: 'reporterCount', label: 'Reporters', numeric: true },
+                { key: 'topThemes', label: 'Top Themes' },
+              ]}
+              sort={outletSort} setSort={setOutletSort} defaultSort="count"
+            />
+          )}
           {/* Outlet Sentiment Bias */}
           {outletBias.length > 0 && (() => {
             const topThemes = themeEntries.slice(0, 5).map(([t]) => t);
             return (
-              <div className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
-                <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-muted)' }}>Sentiment Bias (deviation from average)</h3>
+              <Widget title="Sentiment Bias (deviation from average)">
                 <table className="text-[11px] w-full">
                   <thead>
                     <tr>
                       <th className="px-2 py-1.5 text-left font-medium" style={{ color: 'var(--text-muted)' }}>Outlet</th>
-                      {topThemes.map(t => <th key={t} className="px-2 py-1.5 text-center font-medium" style={{ color: 'var(--text-muted)' }}>{t.length > 14 ? t.slice(0, 13) + '…' : t}</th>)}
+                      {topThemes.map(t => <th key={t} className="px-2 py-1.5 text-center font-medium" style={{ color: 'var(--text-muted)' }}>{t.length > 14 ? t.slice(0, 13) + '...' : t}</th>)}
                       <th className="px-2 py-1.5 text-center font-medium" style={{ color: 'var(--text-muted)' }}>Overall</th>
                     </tr>
                   </thead>
@@ -823,45 +901,50 @@ export default function AnalyticsTab({ workstream }) {
                   </tbody>
                 </table>
                 <p className="text-[9px] mt-2" style={{ color: 'var(--text-muted)' }}>Positive = more positive than average, negative = more negative. Based on articles with 2+ mentions per outlet-topic pair.</p>
-              </div>
+              </Widget>
             );
           })()}
         </div>
       )}
 
-      {/* ─── FIRMS ─── */}
-      {sub === 'Firms' && <SortableTable
-        data={firms.map(f => ({ ...f, oAvg: f.overallSents.length > 0 ? +(f.overallSents.reduce((a, b) => a + b, 0) / f.overallSents.length).toFixed(1) : null, fAvg: f.firmSents.length > 0 ? +(f.firmSents.reduce((a, b) => a + b, 0) / f.firmSents.length).toFixed(1) : null }))}
-        columns={[
-          { key: 'name', label: 'Firm', render: v => <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{v}</span> },
-          { key: 'count', label: 'Articles', numeric: true },
-          { key: 'oAvg', label: 'Overall Avg', render: v => v ? <span className={sentimentColor(Math.round(v))}>{v}</span> : '—', numeric: true },
-          { key: 'fAvg', label: 'Firm-Specific', render: v => v ? <span className={sentimentColor(Math.round(v))}>{v}</span> : '—', numeric: true },
-        ]}
-        sort={firmSort} setSort={setFirmSort} defaultSort="count"
-      />}
+      {/* FIRMS */}
+      {sub === 'Firms' && (
+        firms.length === 0 ? <EmptyState /> : (
+          <SortableTable
+            data={firms.map(f => ({ ...f, oAvg: f.overallSents.length > 0 ? +(f.overallSents.reduce((a, b) => a + b, 0) / f.overallSents.length).toFixed(1) : null, fAvg: f.firmSents.length > 0 ? +(f.firmSents.reduce((a, b) => a + b, 0) / f.firmSents.length).toFixed(1) : null }))}
+            columns={[
+              { key: 'name', label: 'Firm', render: v => <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{v}</span> },
+              { key: 'count', label: 'Articles', numeric: true },
+              { key: 'oAvg', label: 'Overall Avg', render: v => v ? <span className={sentimentColor(Math.round(v))}>{v}</span> : '—', numeric: true },
+              { key: 'fAvg', label: 'Firm-Specific', render: v => v ? <span className={sentimentColor(Math.round(v))}>{v}</span> : '—', numeric: true },
+            ]}
+            sort={firmSort} setSort={setFirmSort} defaultSort="count"
+          />
+        )
+      )}
 
-      {/* ─── THEMES ─── */}
+      {/* THEMES */}
       {sub === 'Themes' && (
         <div className="space-y-4">
-          <SortableTable
-            data={themeEntries.map(([theme, count]) => {
-              const arts = filteredArticles.filter(a => (a.cl_topics || []).includes(theme));
-              const avg = arts.length > 0 ? +(arts.reduce((s, a) => s + (a.cl_sentiment_score || 0), 0) / arts.length).toFixed(1) : null;
-              return { name: theme, count, avg };
-            })}
-            columns={[
-              { key: 'name', label: 'Theme', render: (v) => <button className="font-medium hover:underline" style={{ color: 'var(--text-primary)' }} onClick={() => setSelectedThemeTimeline(v === selectedThemeTimeline ? null : v)}>{v}</button> },
-              { key: 'count', label: 'Articles', numeric: true },
-              { key: 'avg', label: 'Avg Sentiment', render: v => v ? <span className={sentimentColor(Math.round(v))}>{v} — {sentimentLabel(Math.round(v))}</span> : '—', numeric: true },
-            ]}
-            sort={themeSort} setSort={setThemeSort} defaultSort="count"
-          />
+          {themeEntries.length === 0 ? <EmptyState /> : (
+            <SortableTable
+              data={themeEntries.map(([theme, count]) => {
+                const arts = filteredArticles.filter(a => (a.cl_topics || []).includes(theme));
+                const avg = arts.length > 0 ? +(arts.reduce((s, a) => s + (a.cl_sentiment_score || 0), 0) / arts.length).toFixed(1) : null;
+                return { name: theme, count, avg };
+              })}
+              columns={[
+                { key: 'name', label: 'Theme', render: (v) => <button className="font-medium hover:underline" style={{ color: 'var(--text-primary)' }} onClick={() => setSelectedThemeTimeline(v === selectedThemeTimeline ? null : v)}>{v}</button> },
+                { key: 'count', label: 'Articles', numeric: true },
+                { key: 'avg', label: 'Avg Sentiment', render: v => v ? <span className={sentimentColor(Math.round(v))}>{v} — {sentimentLabel(Math.round(v))}</span> : '—', numeric: true },
+              ]}
+              sort={themeSort} setSort={setThemeSort} defaultSort="count"
+            />
+          )}
           {/* Narrative Timeline */}
           {narrativeTimeline && narrativeTimeline.length > 0 && (
-            <div className="rounded-lg border p-4" style={{ borderColor: 'var(--accent)', background: 'var(--bg-card)' }}>
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-xs font-semibold uppercase tracking-wide" style={{ color: 'var(--accent)' }}>Narrative Timeline: {selectedThemeTimeline}</h3>
+            <Widget title={`Narrative Timeline: ${selectedThemeTimeline}`}>
+              <div className="flex items-center justify-end mb-2">
                 <button onClick={() => setSelectedThemeTimeline(null)} className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Close</button>
               </div>
               <div className="space-y-2">
@@ -885,45 +968,50 @@ export default function AnalyticsTab({ workstream }) {
                   );
                 })}
               </div>
-            </div>
+            </Widget>
           )}
         </div>
       )}
 
-      {/* ─── OUTLET × FIRM ─── */}
+      {/* OUTLET x FIRM */}
       {sub === 'Outlet × Firm' && (
-        <div className="rounded-lg border overflow-x-auto" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
-          <table className="text-xs">
-            <thead>
-              <tr style={{ background: 'var(--bg-content)' }}>
-                <th className="px-2 py-2 text-left font-medium sticky left-0" style={{ color: 'var(--text-muted)', background: 'var(--bg-content)', minWidth: 120 }}>Outlet</th>
-                {firms.slice(0, 10).map(f => <th key={f.name} className="px-2 py-2 text-center font-medium" style={{ color: 'var(--text-muted)', minWidth: 80 }}>{f.name}</th>)}
-              </tr>
-            </thead>
-            <tbody>
-              {outlets.slice(0, 15).map(o => {
-                const oa = filteredArticles.filter(a => (a.outlet || 'Unknown') === o.name);
-                return (
-                  <tr key={o.name} className="border-t" style={{ borderColor: 'var(--border)' }}>
-                    <td className="px-2 py-1.5 font-medium sticky left-0" style={{ color: 'var(--text-primary)', background: 'var(--bg-card)' }}>{o.name}</td>
-                    {firms.slice(0, 10).map(f => {
-                      const ca = oa.filter(a => (a.cl_firms_mentioned || []).includes(f.name));
-                      if (!ca.length) return <td key={f.name} className="px-2 py-1.5 text-center" style={{ color: 'var(--text-muted)' }}>—</td>;
-                      const fs = ca.map(a => (a.cl_firm_sentiments || {})[f.name]).filter(Boolean);
-                      const avg = fs.length > 0 ? +(fs.reduce((a, b) => a + b, 0) / fs.length).toFixed(1) : +(ca.reduce((s, a) => s + (a.cl_sentiment_score || 0), 0) / ca.length).toFixed(1);
-                      return <td key={f.name} className="px-2 py-1.5 text-center" style={{ backgroundColor: `${sentimentDot(Math.round(avg))}18` }}>
-                        <span className={`font-bold ${sentimentColor(Math.round(avg))}`}>{avg}</span>
-                        <span className="ml-0.5" style={{ color: 'var(--text-muted)' }}>({ca.length})</span>
-                      </td>;
-                    })}
+        firms.length === 0 || outlets.length === 0 ? <EmptyState /> : (
+          <Widget title="Outlet × Firm Matrix">
+            <div className="overflow-x-auto">
+              <table className="text-xs">
+                <thead>
+                  <tr style={{ background: 'var(--bg-content)' }}>
+                    <th className="px-2 py-2 text-left font-medium sticky left-0" style={{ color: 'var(--text-muted)', background: 'var(--bg-content)', minWidth: 120 }}>Outlet</th>
+                    {firms.slice(0, 10).map(f => <th key={f.name} className="px-2 py-2 text-center font-medium" style={{ color: 'var(--text-muted)', minWidth: 80 }}>{f.name}</th>)}
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                </thead>
+                <tbody>
+                  {outlets.slice(0, 15).map(o => {
+                    const oa = filteredArticles.filter(a => (a.outlet || 'Unknown') === o.name);
+                    return (
+                      <tr key={o.name} className="border-t" style={{ borderColor: 'var(--border)' }}>
+                        <td className="px-2 py-1.5 font-medium sticky left-0" style={{ color: 'var(--text-primary)', background: 'var(--bg-card)' }}>{o.name}</td>
+                        {firms.slice(0, 10).map(f => {
+                          const ca = oa.filter(a => (a.cl_firms_mentioned || []).includes(f.name));
+                          if (!ca.length) return <td key={f.name} className="px-2 py-1.5 text-center" style={{ color: 'var(--text-muted)' }}>—</td>;
+                          const fs = ca.map(a => (a.cl_firm_sentiments || {})[f.name]).filter(Boolean);
+                          const avg = fs.length > 0 ? +(fs.reduce((a, b) => a + b, 0) / fs.length).toFixed(1) : +(ca.reduce((s, a) => s + (a.cl_sentiment_score || 0), 0) / ca.length).toFixed(1);
+                          return <td key={f.name} className="px-2 py-1.5 text-center" style={{ backgroundColor: `${sentimentDot(Math.round(avg))}18` }}>
+                            <span className={`font-bold ${sentimentColor(Math.round(avg))}`}>{avg}</span>
+                            <span className="ml-0.5" style={{ color: 'var(--text-muted)' }}>({ca.length})</span>
+                          </td>;
+                        })}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </Widget>
+        )
       )}
 
+      {/* REPORTERS */}
       {sub === 'Reporters' && (
         <div className="space-y-3">
           <div className="flex gap-2 items-center">
@@ -934,51 +1022,54 @@ export default function AnalyticsTab({ workstream }) {
                 style={{ background: reporterSort === val ? 'var(--accent)' : 'var(--bg-content)', color: reporterSort === val ? 'white' : 'var(--text-muted)' }}>{label}</button>
             ))}
           </div>
-          {reporters.map(r => <ReporterCard key={r.name} reporter={r} workstreamId={workstream.id} onUpdate={load} />)}
+          {reporters.length === 0 ? <EmptyState message="No reporters found" /> : (
+            reporters.map(r => <ReporterCard key={r.name} reporter={r} workstreamId={workstream.id} onUpdate={load} />)
+          )}
         </div>
       )}
 
-      {/* ─── SPEAKERS ─── */}
+      {/* SPEAKERS */}
       {sub === 'Speakers' && (
         <div className="space-y-3">
           <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{speakers.length} speakers identified across {filteredArticles.length} articles</p>
-          {speakers.slice(0, 30).map(s => (
-            <div key={s.name} className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
-              <div className="flex items-center justify-between mb-2">
-                <div>
-                  <h4 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{s.name}</h4>
-                  {s.role && <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{s.role}</p>}
-                </div>
-                <div className="flex items-center gap-2 text-xs">
-                  <span style={{ color: 'var(--text-muted)' }}>{s.quotes.length} quotes</span>
-                  {s.stances.length > 0 && (() => {
-                    const pos = s.stances.filter(st => st === 'positive').length;
-                    const neg = s.stances.filter(st => st === 'negative').length;
-                    const neu = s.stances.length - pos - neg;
-                    return <span style={{ color: 'var(--text-muted)' }}>{pos > 0 ? `${pos}+` : ''}{neg > 0 ? ` ${neg}-` : ''}{neu > 0 ? ` ${neu}~` : ''}</span>;
-                  })()}
-                </div>
-              </div>
-              <div className="space-y-2">
-                {s.quotes.slice(0, 5).map((q, i) => (
-                  <div key={i} className="text-xs">
-                    <p className="italic" style={{ color: 'var(--text-primary)' }}>"{q.text}"</p>
-                    <p className="mt-0.5" style={{ color: 'var(--text-muted)' }}>{q.outlet} · {formatDate(q.date)} · {q.stance || ''}</p>
+          {speakers.length === 0 ? <EmptyState message="No speakers identified" /> : (
+            speakers.slice(0, 30).map(s => (
+              <Widget key={s.name} title={s.name} defaultOpen={false}>
+                <div className="flex items-center justify-between mb-2">
+                  <div>
+                    {s.role && <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{s.role}</p>}
                   </div>
-                ))}
-                {s.quotes.length > 5 && <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>+ {s.quotes.length - 5} more quotes</p>}
-              </div>
-            </div>
-          ))}
+                  <div className="flex items-center gap-2 text-xs">
+                    <span style={{ color: 'var(--text-muted)' }}>{s.quotes.length} quotes</span>
+                    {s.stances.length > 0 && (() => {
+                      const pos = s.stances.filter(st => st === 'positive').length;
+                      const neg = s.stances.filter(st => st === 'negative').length;
+                      const neu = s.stances.length - pos - neg;
+                      return <span style={{ color: 'var(--text-muted)' }}>{pos > 0 ? `${pos}+` : ''}{neg > 0 ? ` ${neg}-` : ''}{neu > 0 ? ` ${neu}~` : ''}</span>;
+                    })()}
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  {s.quotes.slice(0, 5).map((q, i) => (
+                    <div key={i} className="text-xs">
+                      <p className="italic" style={{ color: 'var(--text-primary)' }}>"{q.text}"</p>
+                      <p className="mt-0.5" style={{ color: 'var(--text-muted)' }}>{q.outlet} · {formatDate(q.date)} · {q.stance || ''}</p>
+                    </div>
+                  ))}
+                  {s.quotes.length > 5 && <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>+ {s.quotes.length - 5} more quotes</p>}
+                </div>
+              </Widget>
+            ))
+          )}
         </div>
       )}
 
+      {/* ENGAGEMENT */}
       {sub === 'Engagement' && (
         <div className="space-y-4">
           {/* Reporter Break-First */}
           {breakFirstScores.length > 0 && (
-            <div className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
-              <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-muted)' }}>Story Breakers — Who Reports First</h3>
+            <Widget title="Story Breakers — Who Reports First">
               <table className="text-xs w-full">
                 <thead>
                   <tr>
@@ -1002,75 +1093,33 @@ export default function AnalyticsTab({ workstream }) {
                 </tbody>
               </table>
               <p className="text-[9px] mt-2" style={{ color: 'var(--text-muted)' }}>Based on {storyClusters.length} story clusters. "Broken" = first to publish within a cluster.</p>
-            </div>
+            </Widget>
           )}
           <EngagementView reporters={reporters} />
         </div>
       )}
+
+      {/* NARRATIVES */}
       {sub === 'Narratives' && <NarrativesView workstream={workstream} />}
+
+      {/* COMPARISON */}
       {sub === 'Comparison' && <ComparisonView workstream={workstream} />}
     </div>
   );
 }
 
-// ─── Shared components ───
+// --- Shared components ---
 
 function Card({ label, value, sub, small, valueColor, delta, deltaLabel, invertDelta, clickable, onClick }) {
   const deltaColor = delta == null ? null : (invertDelta ? (delta > 0 ? '#16A34A' : delta < 0 ? '#DC2626' : null) : (delta > 0 ? '#DC2626' : delta < 0 ? '#16A34A' : null));
   return (
-    <div className={`rounded-lg border p-3 ${clickable ? 'cursor-pointer hover:shadow-sm transition-shadow' : ''}`} style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }} onClick={onClick}>
+    <div className={`card p-3 ${clickable ? 'cursor-pointer hover:shadow-sm transition-shadow' : ''}`} onClick={onClick}>
       <p className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: 'var(--text-muted)' }}>{label}</p>
       <div className="flex items-baseline gap-1.5">
         <p className={`font-bold ${small ? 'text-sm truncate' : 'text-lg'}`} style={{ color: valueColor || 'var(--text-primary)' }}>{value}</p>
         {delta != null && delta !== 0 && <span className="text-[10px] font-semibold" style={{ color: deltaColor }}>{delta > 0 ? '+' : ''}{delta}{deltaLabel ? ` ${deltaLabel}` : ''}</span>}
       </div>
       {sub && <p className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{sub}</p>}
-    </div>
-  );
-}
-
-function TrendChart({ title, items, articles, trendDays, getKey, getSent, matchFn, onLabelClick }) {
-  const trends = items.map(item => {
-    const name = item.name;
-    const points = trendDays.map(d => {
-      const dayArts = articles.filter(a => getKey(a.publish_date) === d.key && matchFn(a, name));
-      const sents = dayArts.map(a => getSent(a, name)).filter(Boolean);
-      return sents.length > 0 ? +(sents.reduce((x, y) => x + y, 0) / sents.length).toFixed(1) : null;
-    }).map((avg, i) => avg !== null ? { x: i, avg } : null).filter(Boolean);
-    return { name, points };
-  }).filter(t => t.points.length > 1);
-
-  if (!trends.length || trendDays.length < 2) {
-    return (
-      <div className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
-        <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-muted)' }}>{title}</h3>
-        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Not enough data</p>
-      </div>
-    );
-  }
-
-  const allAvgs = trends.flatMap(t => t.points.map(p => p.avg));
-  const min = Math.min(...allAvgs), max = Math.max(...allAvgs), range = max - min || 1;
-  const totalX = trendDays.length - 1;
-
-  return (
-    <div className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
-      <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-muted)' }}>{title}</h3>
-      <div className="relative" style={{ height: 120 }}>
-        <svg className="absolute inset-0 w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
-          {trends.map((t, ti) => (
-            <polyline key={ti} fill="none" stroke={CHART_COLORS[ti % CHART_COLORS.length]} strokeWidth="1.5" vectorEffect="non-scaling-stroke"
-              points={t.points.map(p => `${totalX > 0 ? (p.x / totalX) * 100 : 50},${100 - ((p.avg - min) / range) * 80 - 10}`).join(' ')} />
-          ))}
-        </svg>
-      </div>
-      <div className="flex gap-3 mt-2 flex-wrap">
-        {trends.map((t, ti) => (
-          <span key={ti} className={`text-[10px] flex items-center gap-1 ${onLabelClick ? 'cursor-pointer hover:underline' : ''}`} style={{ color: 'var(--text-muted)' }} onClick={onLabelClick}>
-            <span className="inline-block w-3 h-0.5 rounded" style={{ background: CHART_COLORS[ti % CHART_COLORS.length] }} />{t.name}
-          </span>
-        ))}
-      </div>
     </div>
   );
 }
@@ -1087,7 +1136,7 @@ function SortableTable({ data, columns, sort, setSort, defaultSort }) {
   const toggle = key => setSort(prev => ({ by: key, dir: prev.by === key && prev.dir === 'desc' ? 'asc' : 'desc' }));
 
   return (
-    <div className="rounded-lg border overflow-hidden" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+    <div className="card overflow-hidden">
       <table className="w-full text-sm">
         <thead>
           <tr style={{ background: 'var(--bg-content)' }}>
@@ -1123,7 +1172,7 @@ function ReporterCard({ reporter: r, workstreamId, onUpdate }) {
   async function saveNotes() { await api.updateReporterStatus({ reporter_name: r.name, workstream_id: workstreamId, status, notes }); setEditing(false); }
 
   return (
-    <div className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+    <div className="card p-4">
       <div className="flex items-start justify-between">
         <div>
           <h3 className="font-semibold" style={{ color: 'var(--text-primary)' }}>{r.name}</h3>
@@ -1187,26 +1236,28 @@ function EngagementView({ reporters }) {
         <input type="number" min="1" max="50" value={minArticles} onChange={e => setMinArticles(Math.max(1, parseInt(e.target.value) || 1))} className="border rounded px-2 py-1 text-sm w-14" style={{ borderColor: 'var(--border)' }} />
         <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{scored.length} of {reporters.length} reporters</span>
       </div>
-      {tiers.map(tier => tier.items.length > 0 && (
-        <div key={tier.label}>
-          <h3 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--text-muted)' }}>{tier.label}</h3>
-          <div className="space-y-1.5">
-            {tier.items.map(r => (
-              <div key={r.name} className={`border rounded-lg px-3 py-2 flex items-center justify-between ${tier.cls}`}>
-                <div className="flex items-center gap-3">
-                  <span className="font-medium text-sm" style={{ color: 'var(--text-primary)' }}>{r.name}</span>
-                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{r.outlets.join(', ')}</span>
+      {scored.length === 0 ? <EmptyState message="No reporters match the filter criteria" /> : (
+        tiers.map(tier => tier.items.length > 0 && (
+          <div key={tier.label}>
+            <h3 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--text-muted)' }}>{tier.label}</h3>
+            <div className="space-y-1.5">
+              {tier.items.map(r => (
+                <div key={r.name} className={`border rounded-lg px-3 py-2 flex items-center justify-between ${tier.cls}`}>
+                  <div className="flex items-center gap-3">
+                    <span className="font-medium text-sm" style={{ color: 'var(--text-primary)' }}>{r.name}</span>
+                    <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{r.outlets.join(', ')}</span>
+                  </div>
+                  <div className="flex items-center gap-3 text-xs">
+                    <span className={`font-bold ${sentimentColor(Math.round(r.avg_sentiment))}`}>{r.avg_sentiment}</span>
+                    <span style={{ color: 'var(--text-muted)' }}>{r.article_count} art.</span>
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] ${r.trend === 'Declining' ? 'bg-red-100 text-red-700' : r.trend === 'Improving' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>{r.trend}</span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-3 text-xs">
-                  <span className={`font-bold ${sentimentColor(Math.round(r.avg_sentiment))}`}>{r.avg_sentiment}</span>
-                  <span style={{ color: 'var(--text-muted)' }}>{r.article_count} art.</span>
-                  <span className={`px-1.5 py-0.5 rounded text-[10px] ${r.trend === 'Declining' ? 'bg-red-100 text-red-700' : r.trend === 'Improving' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>{r.trend}</span>
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
-        </div>
-      ))}
+        ))
+      )}
     </div>
   );
 }
@@ -1237,32 +1288,29 @@ function NarrativesView({ workstream }) {
         <div className="space-y-3">
           {narrative.cached && <p className="text-xs italic" style={{ color: 'var(--text-muted)' }}>Cached — click Regenerate for fresh analysis</p>}
           {[['Dominant Narrative', narrative.dominant_narrative], ['Narrative Shift', narrative.narrative_shift]].map(([title, text]) => text && (
-            <div key={title} className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
-              <h3 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--text-muted)' }}>{title}</h3>
+            <Widget key={title} title={title}>
               <p className="text-sm" style={{ color: 'var(--text-primary)' }}>{text}</p>
-            </div>
+            </Widget>
           ))}
           <div className="grid grid-cols-2 gap-3">
             {[['Emerging', narrative.emerging_storylines], ['Fading', narrative.fading_storylines]].map(([label, items]) => items?.length > 0 && (
-              <div key={label} className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
-                <h3 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--text-muted)' }}>{label} Storylines</h3>
+              <Widget key={label} title={`${label} Storylines`}>
                 <ul className="list-disc list-inside space-y-1">{items.map((s, i) => <li key={i} className="text-xs" style={{ color: 'var(--text-muted)' }}>{s}</li>)}</ul>
-              </div>
+              </Widget>
             ))}
           </div>
           {narrative.inflection_points?.length > 0 && (
-            <div className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
-              <h3 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--text-muted)' }}>Inflection Points</h3>
+            <Widget title="Inflection Points">
               {narrative.inflection_points.map((p, i) => (
                 <div key={i} className="flex gap-3 py-1.5 border-b last:border-0 text-xs" style={{ borderColor: 'var(--border)' }}>
                   <span style={{ color: 'var(--text-muted)' }}>{formatDate(p.date)}</span>
                   <div><span className="font-medium" style={{ color: 'var(--text-primary)' }}>{p.headline}</span> <span style={{ color: 'var(--text-muted)' }}>({p.outlet})</span><p style={{ color: 'var(--text-muted)' }}>{p.significance}</p></div>
                 </div>
               ))}
-            </div>
+            </Widget>
           )}
           {narrative.outlook && (
-            <div className="rounded-lg p-4" style={{ background: '#FFFBEB', border: '1px solid #FDE68A' }}>
+            <div className="card p-4" style={{ background: '#FFFBEB', border: '1px solid #FDE68A' }}>
               <h3 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: '#92400E' }}>Outlook (2-4 Weeks)</h3>
               <p className="text-sm" style={{ color: '#78350F' }}>{narrative.outlook}</p>
             </div>
@@ -1293,10 +1341,16 @@ function ComparisonView({ workstream }) {
     finally { setLoading(false); }
   }
 
+  // Prepare comparison chart data for horizontal BarChart
+  const comparisonChartData = data?.entities?.map(e => ({
+    name: e.name,
+    sentiment: e.avg_firm_sentiment || e.avg_sentiment || 4,
+    articles: e.total_articles,
+  })) || [];
+
   return (
     <div className="space-y-4">
-      <div className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
-        <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--text-muted)' }}>Select entities</p>
+      <Widget title="Select Entities">
         <div className="flex flex-wrap gap-1 mb-3 max-h-32 overflow-y-auto">
           {entities.slice(0, 50).map(e => (
             <button key={e.name} onClick={() => setSelected(p => p.includes(e.name) ? p.filter(x => x !== e.name) : [...p, e.name])}
@@ -1305,38 +1359,37 @@ function ComparisonView({ workstream }) {
           ))}
         </div>
         <button onClick={compare} disabled={loading || !selected.length} className="px-4 py-2 rounded text-sm text-white" style={{ background: 'var(--accent)', opacity: loading || !selected.length ? 0.5 : 1 }}>{loading ? 'Comparing...' : `Compare ${selected.length}`}</button>
-      </div>
+      </Widget>
 
       {data?.entities && (
         <>
-          {/* Visual bars */}
-          {data.entities.length > 1 && (
-            <div className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
-              <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-muted)' }}>Sentiment Comparison</h3>
-              <div className="space-y-2">
-                {data.entities.map((e, i) => {
-                  const sent = e.avg_firm_sentiment || e.avg_sentiment || 4;
-                  return (
-                    <div key={e.name} className="flex items-center gap-3">
-                      <span className="text-xs font-medium w-28 truncate" style={{ color: 'var(--text-primary)' }}>{e.name}</span>
-                      <div className="flex-1 rounded-full h-4" style={{ background: 'var(--bg-content)' }}>
-                        <div className="rounded-full h-4 flex items-center justify-end pr-1.5" style={{ width: `${Math.max(((sent - 1) / 6) * 100, 8)}%`, backgroundColor: CHART_COLORS[i % CHART_COLORS.length] }}>
-                          <span className="text-[9px] font-bold text-white">{sent}</span>
-                        </div>
-                      </div>
-                      <span className="text-[10px] w-10 text-right" style={{ color: 'var(--text-muted)' }}>{e.total_articles}</span>
+          {/* Horizontal BarChart for sentiment comparison */}
+          {comparisonChartData.length > 1 && (
+            <Widget title="Sentiment Comparison">
+              <ResponsiveContainer width="100%" height={Math.max(comparisonChartData.length * 40, 120)}>
+                <BarChart data={comparisonChartData} layout="vertical" margin={{ left: 10, right: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                  <XAxis type="number" domain={[1, 7]} tick={{ fontSize: 10 }} />
+                  <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={100} />
+                  <Tooltip content={({ active, payload }) => active && payload?.[0] ? (
+                    <div className="card px-3 py-2 text-xs shadow-lg">
+                      <p className="font-semibold">{payload[0].payload.name}</p>
+                      <p>Sentiment: {payload[0].payload.sentiment}/7</p>
+                      <p>{payload[0].payload.articles} articles</p>
                     </div>
-                  );
-                })}
-              </div>
-            </div>
+                  ) : null} />
+                  <Bar dataKey="sentiment" radius={[0, 4, 4, 0]}>
+                    {comparisonChartData.map((entry, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </Widget>
           )}
-          {/* Cards */}
+          {/* Entity detail cards */}
           <div className="grid grid-cols-2 gap-3">
             {data.entities.map(e => (
-              <div key={e.name} className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+              <Widget key={e.name} title={e.name}>
                 <div className="flex items-center justify-between mb-2">
-                  <h4 className="font-semibold" style={{ color: 'var(--text-primary)' }}>{e.name}</h4>
                   <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{e.total_articles} articles</span>
                 </div>
                 <div className="flex gap-4 mb-2">
@@ -1347,7 +1400,7 @@ function ComparisonView({ workstream }) {
                 <div className="flex flex-wrap gap-1">
                   {e.top_themes.slice(0, 3).map(t => <span key={t.theme} className="px-1.5 py-0.5 rounded text-[10px]" style={{ background: 'var(--bg-content)', color: 'var(--text-muted)' }}>{t.theme}</span>)}
                 </div>
-              </div>
+              </Widget>
             ))}
           </div>
         </>
