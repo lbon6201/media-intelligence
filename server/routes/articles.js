@@ -205,4 +205,14 @@ router.delete('/:id', async (req, res) => {
   res.json({ success: true });
 });
 
+// Pin/unpin
+router.post('/:id/pin', async (req, res) => {
+  await db.run('UPDATE articles SET pinned = 1 WHERE id = ?', req.params.id);
+  res.json({ success: true });
+});
+router.post('/:id/unpin', async (req, res) => {
+  await db.run('UPDATE articles SET pinned = 0 WHERE id = ?', req.params.id);
+  res.json({ success: true });
+});
+
 export default router;

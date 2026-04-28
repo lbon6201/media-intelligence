@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { api } from '../api';
 import { sentimentColor, sentimentDot, formatDate, sentimentLabel, reporterStatusColor, REPORTER_STATUSES } from '../lib/helpers';
 
-const SUBTABS = ['Dashboard', 'Outlets', 'Firms', 'Themes', 'Outlet × Firm', 'Reporters', 'Engagement', 'Comparison', 'Narratives'];
+const SUBTABS = ['Dashboard', 'Outlets', 'Firms', 'Themes', 'Outlet × Firm', 'Speakers', 'Reporters', 'Engagement', 'Comparison', 'Narratives'];
 const SENT_LABELS = ['Very Negative', 'Negative', 'Slightly Negative', 'Neutral', 'Slightly Positive', 'Positive', 'Very Positive'];
 const CHART_COLORS = ['#0057b8', '#dc2626', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#be185d'];
 
@@ -19,6 +19,8 @@ export default function AnalyticsTab({ workstream }) {
   const [dateTo, setDateTo] = useState('');
   const [sentimentDrilldown, setSentimentDrilldown] = useState(null);
   const [datePreset, setDatePreset] = useState('all');
+  const [briefMeText, setBriefMeText] = useState('');
+  const [briefMeLoading, setBriefMeLoading] = useState(false);
 
   function applyPreset(preset) {
     setDatePreset(preset);
@@ -146,6 +148,128 @@ export default function AnalyticsTab({ workstream }) {
     return { volChange: oVol > 0 ? Math.round(((rVol - oVol) / oVol) * 100) : 0, rVol, oVol, sentChange: rAvg && oAvg ? +(rAvg - oAvg).toFixed(1) : null, rAvg, oAvg };
   }, [trendDays]);
 
+  // Share of Voice: firm mention % over time
+  const sovData = useMemo(() => {
+    const topF = firms.slice(0, 6).map(f => f.name);
+    if (topF.length === 0 || trendDays.length < 2) return null;
+    return trendDays.map(d => {
+      const dayArts = filteredArticles.filter(a => getTimeKey(a.publish_date) === d.key);
+      const counts = {};
+      topF.forEach(f => { counts[f] = dayArts.filter(a => (a.cl_firms_mentioned || []).includes(f)).length; });
+      const total = Object.values(counts).reduce((s, v) => s + v, 0) || 1;
+      const pcts = {};
+      topF.forEach(f => { pcts[f] = Math.round((counts[f] / total) * 100); });
+      return { key: d.key, ...pcts };
+    });
+  }, [firms, filteredArticles, trendDays]);
+
+  // Pinned articles
+  const pinnedArticles = useMemo(() => filteredArticles.filter(a => a.pinned), [filteredArticles]);
+
+  // Speaker aggregation across all quotes
+  const speakers = useMemo(() => {
+    const map = {};
+    filteredArticles.forEach(a => {
+      [...(a.cl_external_quotes || []), ...(a.cl_internal_quotes || [])].forEach(q => {
+        if (!q.speaker && !q.source) return;
+        const name = q.speaker || q.source;
+        if (!map[name]) map[name] = { name, role: q.role || '', quotes: [], stances: [] };
+        map[name].quotes.push({ text: q.quote, stance: q.stance, headline: a.headline, outlet: a.outlet, date: a.publish_date });
+        if (q.stance) map[name].stances.push(q.stance);
+      });
+    });
+    return Object.values(map).sort((a, b) => b.quotes.length - a.quotes.length);
+  }, [filteredArticles]);
+
+  // Story clustering: group articles by headline similarity + date proximity
+  const storyClusters = useMemo(() => {
+    if (filteredArticles.length < 2) return [];
+    const sorted = [...filteredArticles].sort((a, b) => (a.publish_date || '').localeCompare(b.publish_date || ''));
+    const clusters = [];
+    const assigned = new Set();
+
+    function wordSet(text) { return new Set((text || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(w => w.length > 3)); }
+    function similarity(a, b) {
+      const intersection = [...a].filter(w => b.has(w)).length;
+      return a.size + b.size > 0 ? (2 * intersection) / (a.size + b.size) : 0;
+    }
+
+    for (let i = 0; i < sorted.length; i++) {
+      if (assigned.has(sorted[i].id)) continue;
+      const cluster = [sorted[i]];
+      assigned.add(sorted[i].id);
+      const ws = wordSet(sorted[i].headline);
+      for (let j = i + 1; j < sorted.length; j++) {
+        if (assigned.has(sorted[j].id)) continue;
+        // Must be within 3 days
+        if (sorted[i].publish_date && sorted[j].publish_date) {
+          const diff = Math.abs(new Date(sorted[j].publish_date) - new Date(sorted[i].publish_date)) / 86400000;
+          if (diff > 3) continue;
+        }
+        if (similarity(ws, wordSet(sorted[j].headline)) > 0.35) {
+          cluster.push(sorted[j]);
+          assigned.add(sorted[j].id);
+        }
+      }
+      if (cluster.length >= 2) {
+        const sents = cluster.map(a => a.cl_sentiment_score).filter(Boolean);
+        clusters.push({
+          articles: cluster,
+          headline: cluster[0].headline,
+          outlets: [...new Set(cluster.map(a => a.outlet).filter(Boolean))],
+          count: cluster.length,
+          avgSent: sents.length > 0 ? +(sents.reduce((s, v) => s + v, 0) / sents.length).toFixed(1) : null,
+          dateRange: [cluster[0].publish_date, cluster[cluster.length - 1].publish_date],
+          firstOutlet: cluster[0].outlet,
+        });
+      }
+    }
+    return clusters.sort((a, b) => b.count - a.count);
+  }, [filteredArticles]);
+
+  // Outlet bias: deviation from mean sentiment per topic
+  const outletBias = useMemo(() => {
+    if (outlets.length < 2 || themeEntries.length === 0) return [];
+    const topThemes = themeEntries.slice(0, 5).map(([t]) => t);
+    const globalAvgs = {};
+    topThemes.forEach(t => {
+      const arts = filteredArticles.filter(a => (a.cl_topics || []).includes(t) && a.cl_sentiment_score);
+      globalAvgs[t] = arts.length > 0 ? arts.reduce((s, a) => s + a.cl_sentiment_score, 0) / arts.length : 4;
+    });
+    return outlets.slice(0, 10).map(o => {
+      const biases = {};
+      let totalBias = 0, biasCount = 0;
+      topThemes.forEach(t => {
+        const arts = filteredArticles.filter(a => a.outlet === o.name && (a.cl_topics || []).includes(t) && a.cl_sentiment_score);
+        if (arts.length < 2) { biases[t] = null; return; }
+        const avg = arts.reduce((s, a) => s + a.cl_sentiment_score, 0) / arts.length;
+        biases[t] = +(avg - globalAvgs[t]).toFixed(1);
+        totalBias += biases[t]; biasCount++;
+      });
+      return { name: o.name, biases, overall: biasCount > 0 ? +(totalBias / biasCount).toFixed(1) : 0, count: o.count };
+    });
+  }, [outlets, filteredArticles, themeEntries]);
+
+  // Brief Me handler
+  async function handleBriefMe() {
+    setBriefMeLoading(true);
+    setBriefMeText('');
+    try {
+      const ids = filteredArticles.slice(0, 40).map(a => a.id);
+      const res = await api.briefMe(workstream.id, { article_ids: ids });
+      setBriefMeText(res.summary);
+    } catch (e) { setBriefMeText('Failed: ' + e.message); }
+    finally { setBriefMeLoading(false); }
+  }
+
+  // Pin/unpin handler
+  async function togglePin(id) {
+    const a = articles.find(x => x.id === id);
+    if (!a) return;
+    if (a.pinned) { await api.unpinArticle(id); } else { await api.pinArticle(id); }
+    setArticles(prev => prev.map(x => x.id === id ? { ...x, pinned: x.pinned ? 0 : 1 } : x));
+  }
+
   // Comparative period for KPIs
   const prevPeriod = useMemo(() => {
     if (!dateFrom) return null;
@@ -190,8 +314,9 @@ export default function AnalyticsTab({ workstream }) {
     Outlets: outlets.length,
     Firms: firms.length,
     Themes: themeEntries.length,
+    Speakers: speakers.length,
     Reporters: reporters.length,
-  }), [totalArticles, outlets.length, firms.length, themeEntries.length, reporters.length]);
+  }), [totalArticles, outlets.length, firms.length, themeEntries.length, speakers.length, reporters.length]);
 
   // Click-through: navigate to a tab, optionally with a search hint
   function goTo(tab) { setSub(tab); }
@@ -242,6 +367,21 @@ export default function AnalyticsTab({ workstream }) {
             <div className="rounded-lg p-3 space-y-1" style={{ background: '#FEF2F2', border: '1px solid #FECACA' }}>
               <p className="text-xs font-semibold" style={{ color: '#991B1B' }}>Attention Required</p>
               {alertItems.map((a, i) => <p key={i} className="text-xs" style={{ color: '#7F1D1D' }}>{a.text}</p>)}
+            </div>
+          )}
+
+          {/* Brief Me */}
+          <div className="flex items-center gap-3">
+            <button onClick={handleBriefMe} disabled={briefMeLoading || totalArticles === 0} className="px-4 py-1.5 rounded text-xs font-medium text-white transition-opacity" style={{ background: 'var(--accent)', opacity: briefMeLoading || totalArticles === 0 ? 0.5 : 1 }}>
+              {briefMeLoading ? 'Generating...' : 'Brief Me'}
+            </button>
+            {briefMeText && <button onClick={() => setBriefMeText('')} className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Dismiss</button>}
+            {pinnedArticles.length > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: '#FEF3C7', color: '#92400E' }}>{pinnedArticles.length} pinned</span>}
+          </div>
+          {briefMeText && (
+            <div className="rounded-lg border p-4" style={{ borderColor: 'var(--accent)', background: 'var(--bg-card)' }}>
+              <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--accent)' }}>AI Brief</p>
+              {briefMeText.split('\n\n').map((p, i) => <p key={i} className="text-sm mb-2" style={{ color: 'var(--text-primary)' }}>{p}</p>)}
             </div>
           )}
 
@@ -362,6 +502,78 @@ export default function AnalyticsTab({ workstream }) {
             </div>
           )}
 
+          {/* Share of Voice */}
+          {sovData && sovData.length > 1 && (() => {
+            const topF = firms.slice(0, 6).map(f => f.name);
+            return (
+              <div className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+                <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-muted)' }}>Share of Voice</h3>
+                <div className="flex items-end gap-px" style={{ height: 120 }}>
+                  {sovData.map((d, i) => {
+                    let yOffset = 0;
+                    return (
+                      <div key={i} className="flex-1 flex flex-col justify-end" style={{ height: '100%', minWidth: 1 }}>
+                        {topF.map((f, fi) => {
+                          const pct = d[f] || 0;
+                          const h = Math.max((pct / 100) * 110, pct > 0 ? 1 : 0);
+                          return <div key={f} style={{ height: h, backgroundColor: CHART_COLORS[fi % CHART_COLORS.length], opacity: 0.85 }} />;
+                        })}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="flex justify-between mt-1 text-[9px] font-mono" style={{ color: 'var(--text-muted)' }}>
+                  <span>{formatDate(sovData[0]?.key)}</span>
+                  <span>{formatDate(sovData[sovData.length - 1]?.key)}</span>
+                </div>
+                <div className="flex gap-3 mt-2 flex-wrap">
+                  {topF.map((f, fi) => (
+                    <span key={f} className="text-[10px] flex items-center gap-1 cursor-pointer hover:underline" style={{ color: 'var(--text-muted)' }} onClick={() => goTo('Firms')}>
+                      <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: CHART_COLORS[fi % CHART_COLORS.length] }} />{f}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Story Clusters */}
+          {storyClusters.length > 0 && (
+            <div className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+              <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-muted)' }}>Story Clusters ({storyClusters.length})</h3>
+              <div className="space-y-2">
+                {storyClusters.slice(0, 5).map((c, i) => (
+                  <div key={i} className="flex items-start gap-3 py-2 border-b last:border-0" style={{ borderColor: 'var(--border)' }}>
+                    <span className="text-lg font-bold font-mono w-6" style={{ color: 'var(--accent)' }}>{c.count}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{c.headline}</p>
+                      <p className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                        {c.outlets.join(', ')} · {c.avgSent ? `Avg: ${c.avgSent}/7` : ''} · First: {c.firstOutlet}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Pinned Articles */}
+          {pinnedArticles.length > 0 && (
+            <div className="rounded-lg border p-4" style={{ borderColor: '#FDE68A', background: '#FFFBEB' }}>
+              <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: '#92400E' }}>Pinned Articles ({pinnedArticles.length})</h3>
+              <div className="space-y-1.5">
+                {pinnedArticles.sort((a, b) => (b.publish_date || '').localeCompare(a.publish_date || '')).map(a => (
+                  <div key={a.id} className="flex items-center gap-2 text-[11px]">
+                    <button onClick={() => togglePin(a.id)} className="text-amber-500 hover:text-amber-700 text-xs">unpin</button>
+                    {a.cl_sentiment_score && <span className={`font-bold w-4 text-center ${sentimentColor(a.cl_sentiment_score)}`}>{a.cl_sentiment_score}</span>}
+                    <span className="flex-1 truncate" style={{ color: 'var(--text-primary)' }}>{a.headline}</span>
+                    <span style={{ color: 'var(--text-muted)' }}>{a.outlet} · {formatDate(a.publish_date)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Two-column: Outlet Tone Matrix + Emerging Narratives */}
           <div className="grid grid-cols-2 gap-4">
             {/* Outlet × Theme */}
@@ -450,6 +662,7 @@ export default function AnalyticsTab({ workstream }) {
               <div className="space-y-1.5">
                 {[...filteredArticles].sort((a, b) => (b.publish_date || '').localeCompare(a.publish_date || '')).slice(0, 10).map(a => (
                   <div key={a.id} className="flex items-center gap-2 text-[11px]">
+                    <button onClick={() => togglePin(a.id)} className="text-[10px] w-3" style={{ color: a.pinned ? '#D97706' : 'var(--text-muted)', opacity: a.pinned ? 1 : 0.3 }} title={a.pinned ? 'Unpin' : 'Pin'}>&#9733;</button>
                     {a.cl_sentiment_score && <span className={`font-bold w-4 text-center ${sentimentColor(a.cl_sentiment_score)}`}>{a.cl_sentiment_score}</span>}
                     <span className="flex-1 truncate" style={{ color: 'var(--text-primary)' }}>{a.headline}</span>
                     <span style={{ color: 'var(--text-muted)' }}>{formatDate(a.publish_date)}</span>
@@ -462,17 +675,53 @@ export default function AnalyticsTab({ workstream }) {
       )}
 
       {/* ─── OUTLETS ─── */}
-      {sub === 'Outlets' && <SortableTable
-        data={outlets.map(o => ({ ...o, avg: o.sentiments.length > 0 ? +(o.sentiments.reduce((a, b) => a + b, 0) / o.sentiments.length).toFixed(1) : null, reporterCount: o.reporters.size, topThemes: Object.entries(o.themes).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([n]) => n).join(', ') }))}
-        columns={[
-          { key: 'name', label: 'Outlet', render: v => <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{v}</span> },
-          { key: 'count', label: 'Articles', numeric: true },
-          { key: 'avg', label: 'Avg Sentiment', render: v => v ? <span className={sentimentColor(Math.round(v))}>{v} — {sentimentLabel(Math.round(v))}</span> : '—', numeric: true },
-          { key: 'reporterCount', label: 'Reporters', numeric: true },
-          { key: 'topThemes', label: 'Top Themes' },
-        ]}
-        sort={outletSort} setSort={setOutletSort} defaultSort="count"
-      />}
+      {sub === 'Outlets' && (
+        <div className="space-y-4">
+          <SortableTable
+            data={outlets.map(o => ({ ...o, avg: o.sentiments.length > 0 ? +(o.sentiments.reduce((a, b) => a + b, 0) / o.sentiments.length).toFixed(1) : null, reporterCount: o.reporters.size, topThemes: Object.entries(o.themes).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([n]) => n).join(', ') }))}
+            columns={[
+              { key: 'name', label: 'Outlet', render: v => <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{v}</span> },
+              { key: 'count', label: 'Articles', numeric: true },
+              { key: 'avg', label: 'Avg Sentiment', render: v => v ? <span className={sentimentColor(Math.round(v))}>{v} — {sentimentLabel(Math.round(v))}</span> : '—', numeric: true },
+              { key: 'reporterCount', label: 'Reporters', numeric: true },
+              { key: 'topThemes', label: 'Top Themes' },
+            ]}
+            sort={outletSort} setSort={setOutletSort} defaultSort="count"
+          />
+          {/* Outlet Sentiment Bias */}
+          {outletBias.length > 0 && (() => {
+            const topThemes = themeEntries.slice(0, 5).map(([t]) => t);
+            return (
+              <div className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+                <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-muted)' }}>Sentiment Bias (deviation from average)</h3>
+                <table className="text-[11px] w-full">
+                  <thead>
+                    <tr>
+                      <th className="px-2 py-1.5 text-left font-medium" style={{ color: 'var(--text-muted)' }}>Outlet</th>
+                      {topThemes.map(t => <th key={t} className="px-2 py-1.5 text-center font-medium" style={{ color: 'var(--text-muted)' }}>{t.length > 14 ? t.slice(0, 13) + '…' : t}</th>)}
+                      <th className="px-2 py-1.5 text-center font-medium" style={{ color: 'var(--text-muted)' }}>Overall</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {outletBias.map(o => (
+                      <tr key={o.name} className="border-t" style={{ borderColor: 'var(--border)' }}>
+                        <td className="px-2 py-1.5 font-medium" style={{ color: 'var(--text-primary)' }}>{o.name}</td>
+                        {topThemes.map(t => {
+                          const b = o.biases[t];
+                          if (b == null) return <td key={t} className="px-2 py-1.5 text-center" style={{ color: 'var(--text-muted)' }}>—</td>;
+                          return <td key={t} className="px-2 py-1.5 text-center font-mono font-bold" style={{ color: b > 0.3 ? '#16A34A' : b < -0.3 ? '#DC2626' : 'var(--text-muted)' }}>{b > 0 ? '+' : ''}{b}</td>;
+                        })}
+                        <td className="px-2 py-1.5 text-center font-mono font-bold" style={{ color: o.overall > 0.3 ? '#16A34A' : o.overall < -0.3 ? '#DC2626' : 'var(--text-muted)' }}>{o.overall > 0 ? '+' : ''}{o.overall}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p className="text-[9px] mt-2" style={{ color: 'var(--text-muted)' }}>Positive = more positive than average, negative = more negative. Based on articles with 2+ mentions per outlet-topic pair.</p>
+              </div>
+            );
+          })()}
+        </div>
+      )}
 
       {/* ─── FIRMS ─── */}
       {sub === 'Firms' && <SortableTable
@@ -546,6 +795,41 @@ export default function AnalyticsTab({ workstream }) {
             ))}
           </div>
           {reporters.map(r => <ReporterCard key={r.name} reporter={r} workstreamId={workstream.id} onUpdate={load} />)}
+        </div>
+      )}
+
+      {/* ─── SPEAKERS ─── */}
+      {sub === 'Speakers' && (
+        <div className="space-y-3">
+          <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{speakers.length} speakers identified across {filteredArticles.length} articles</p>
+          {speakers.slice(0, 30).map(s => (
+            <div key={s.name} className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+              <div className="flex items-center justify-between mb-2">
+                <div>
+                  <h4 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{s.name}</h4>
+                  {s.role && <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{s.role}</p>}
+                </div>
+                <div className="flex items-center gap-2 text-xs">
+                  <span style={{ color: 'var(--text-muted)' }}>{s.quotes.length} quotes</span>
+                  {s.stances.length > 0 && (() => {
+                    const pos = s.stances.filter(st => st === 'positive').length;
+                    const neg = s.stances.filter(st => st === 'negative').length;
+                    const neu = s.stances.length - pos - neg;
+                    return <span style={{ color: 'var(--text-muted)' }}>{pos > 0 ? `${pos}+` : ''}{neg > 0 ? ` ${neg}-` : ''}{neu > 0 ? ` ${neu}~` : ''}</span>;
+                  })()}
+                </div>
+              </div>
+              <div className="space-y-2">
+                {s.quotes.slice(0, 5).map((q, i) => (
+                  <div key={i} className="text-xs">
+                    <p className="italic" style={{ color: 'var(--text-primary)' }}>"{q.text}"</p>
+                    <p className="mt-0.5" style={{ color: 'var(--text-muted)' }}>{q.outlet} · {formatDate(q.date)} · {q.stance || ''}</p>
+                  </div>
+                ))}
+                {s.quotes.length > 5 && <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>+ {s.quotes.length - 5} more quotes</p>}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 

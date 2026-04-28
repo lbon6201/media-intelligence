@@ -63,6 +63,8 @@ if (IS_POSTGRES) {
       'ALTER TABLE workstreams ADD COLUMN IF NOT EXISTS strategic_context TEXT DEFAULT \'\'',
       'ALTER TABLE reporter_statuses ADD COLUMN IF NOT EXISTS engagement_history TEXT DEFAULT \'[]\'',
       'ALTER TABLE reporter_statuses ADD COLUMN IF NOT EXISTS last_contacted TEXT',
+      'ALTER TABLE articles ADD COLUMN IF NOT EXISTS pinned INTEGER DEFAULT 0',
+      'ALTER TABLE workstreams ADD COLUMN IF NOT EXISTS keyword_alerts TEXT DEFAULT \'[]\'',
     ];
     for (const sql of pgMigrations) {
       try { await _pgPool.query(sql); } catch {}

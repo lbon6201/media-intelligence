@@ -70,7 +70,8 @@ CREATE TABLE IF NOT EXISTS articles (
   internal_flags TEXT,
   internal_tags TEXT,
   annotated_at TEXT,
-  annotated_by TEXT
+  annotated_by TEXT,
+  pinned INTEGER DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_articles_workstream ON articles(workstream_id);

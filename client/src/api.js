@@ -43,6 +43,11 @@ export const api = {
   bulkStatus: (ids, cl_status) => request('/articles/bulk-status', { method: 'PUT', body: JSON.stringify({ ids, cl_status }) }),
   deleteArticle: (id) => request(`/articles/${id}`, { method: 'DELETE' }),
   bulkDelete: (ids) => request('/articles/bulk-delete', { method: 'POST', body: JSON.stringify({ ids }) }),
+  pinArticle: (id) => request(`/articles/${id}/pin`, { method: 'POST' }),
+  unpinArticle: (id) => request(`/articles/${id}/unpin`, { method: 'POST' }),
+
+  // Brief Me
+  briefMe: (workstreamId, data) => request(`/brief-me/${workstreamId}`, { method: 'POST', body: JSON.stringify(data) }),
 
   // Classification
   startClassification: (workstreamId) => request(`/classify/${workstreamId}`, { method: 'POST' }),
