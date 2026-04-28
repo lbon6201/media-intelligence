@@ -2,7 +2,9 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { api } from '../api';
 import { sentimentColor, sentimentDot, formatDate, sentimentLabel, reporterStatusColor, REPORTER_STATUSES } from '../lib/helpers';
 
-const SUBTABS = ['Dashboard', 'Narratives', 'Comparison', 'Reporters', 'Outlets', 'Firms', 'Themes', 'Outlet × Firm', 'Engagement'];
+const SUBTABS = ['Dashboard', 'Outlets', 'Firms', 'Themes', 'Outlet × Firm', 'Reporters', 'Engagement', 'Comparison', 'Narratives'];
+const SENT_LABELS = ['Very Negative', 'Negative', 'Slightly Negative', 'Neutral', 'Slightly Positive', 'Positive', 'Very Positive'];
+const CHART_COLORS = ['#0057b8', '#dc2626', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#be185d'];
 
 export default function AnalyticsTab({ workstream }) {
   const [sub, setSub] = useState('Dashboard');
@@ -12,11 +14,10 @@ export default function AnalyticsTab({ workstream }) {
   const [outletSort, setOutletSort] = useState({ by: 'count', dir: 'desc' });
   const [firmSort, setFirmSort] = useState({ by: 'count', dir: 'desc' });
   const [themeSort, setThemeSort] = useState({ by: 'count', dir: 'desc' });
-  // Phase 2: Dashboard controls
-  const [timeGranularity, setTimeGranularity] = useState('day'); // day | week | month
+  const [timeGranularity, setTimeGranularity] = useState('day');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
-  const [sentimentDrilldown, setSentimentDrilldown] = useState(null); // 1-7 or null
+  const [sentimentDrilldown, setSentimentDrilldown] = useState(null);
 
   const load = useCallback(async () => {
     const [arts, reps] = await Promise.all([
@@ -29,51 +30,47 @@ export default function AnalyticsTab({ workstream }) {
 
   useEffect(() => { load(); }, [load]);
 
-  // Date-filtered articles
-  const filteredArticles = useMemo(() => {
-    return articles.filter(a => {
-      if (dateFrom && a.publish_date && a.publish_date < dateFrom) return false;
-      if (dateTo && a.publish_date && a.publish_date > dateTo) return false;
-      return true;
-    });
-  }, [articles, dateFrom, dateTo]);
+  // --- Derived data ---
+  const filteredArticles = useMemo(() => articles.filter(a => {
+    if (dateFrom && a.publish_date && a.publish_date < dateFrom) return false;
+    if (dateTo && a.publish_date && a.publish_date > dateTo) return false;
+    return true;
+  }), [articles, dateFrom, dateTo]);
 
-  // Aggregations (use filteredArticles for dashboard)
   const totalArticles = filteredArticles.length;
   const avgSentiment = totalArticles > 0 ? +(filteredArticles.reduce((s, a) => s + (a.cl_sentiment_score || 0), 0) / totalArticles).toFixed(1) : 0;
   const negShare = totalArticles > 0 ? +((filteredArticles.filter(a => a.cl_sentiment_score && a.cl_sentiment_score <= 3).length / totalArticles) * 100).toFixed(0) : 0;
 
-  // Top reporter/theme
   const reporterCounts = {};
-  filteredArticles.forEach(a => { if (a.author) { reporterCounts[a.author] = (reporterCounts[a.author] || 0) + 1; } });
+  filteredArticles.forEach(a => { if (a.author) reporterCounts[a.author] = (reporterCounts[a.author] || 0) + 1; });
   const topReporter = Object.entries(reporterCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || '—';
 
   const themeCounts = {};
   filteredArticles.forEach(a => { (a.cl_topics || []).forEach(t => { themeCounts[t] = (themeCounts[t] || 0) + 1; }); });
   const topTheme = Object.entries(themeCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || '—';
+  const themeEntries = Object.entries(themeCounts).sort((a, b) => b[1] - a[1]);
+  const maxThemeCount = Math.max(...themeEntries.map(e => e[1]), 1);
 
   // Sentiment distribution
   const sentDist = [0, 0, 0, 0, 0, 0, 0];
-  const sentArticles = [[], [], [], [], [], [], []]; // articles per bucket for drilldown
+  const sentBucketArticles = [[], [], [], [], [], [], []];
   filteredArticles.forEach(a => {
     if (a.cl_sentiment_score >= 1 && a.cl_sentiment_score <= 7) {
       sentDist[a.cl_sentiment_score - 1]++;
-      sentArticles[a.cl_sentiment_score - 1].push(a);
+      sentBucketArticles[a.cl_sentiment_score - 1].push(a);
     }
   });
   const maxSentDist = Math.max(...sentDist, 1);
-  const SENT_LABELS = ['Very Negative', 'Negative', 'Slightly Negative', 'Neutral', 'Slightly Positive', 'Positive', 'Very Positive'];
 
-  // Group by time granularity
+  // Time grouping
   function getTimeKey(dateStr) {
     if (!dateStr) return null;
     if (timeGranularity === 'day') return dateStr;
     if (timeGranularity === 'week') {
       const d = new Date(dateStr + 'T12:00:00');
       const day = d.getDay();
-      const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-      const monday = new Date(d.setDate(diff));
-      return monday.toISOString().split('T')[0];
+      d.setDate(d.getDate() - day + (day === 0 ? -6 : 1));
+      return d.toISOString().split('T')[0];
     }
     if (timeGranularity === 'month') return dateStr.slice(0, 7);
     return dateStr;
@@ -92,47 +89,50 @@ export default function AnalyticsTab({ workstream }) {
   }));
   const maxDayCount = Math.max(...trendDays.map(d => d.count), 1);
 
-  // Theme breakdown
-  const themeEntries = Object.entries(themeCounts).sort((a, b) => b[1] - a[1]);
-
-  // Alert items: negative tier-1 articles, big sentiment shifts
+  // Alerts
   const alertItems = useMemo(() => {
     const alerts = [];
-    const tier1Outlets = ['The Wall Street Journal', 'Financial Times', 'Bloomberg', 'Reuters', 'The New York Times', 'The Washington Post', 'CNBC', 'Associated Press'];
-    const recentNegTier1 = filteredArticles.filter(a =>
-      a.cl_sentiment_score && a.cl_sentiment_score <= 2 && tier1Outlets.includes(a.outlet)
-    ).sort((a, b) => (b.publish_date || '').localeCompare(a.publish_date || '')).slice(0, 3);
-    recentNegTier1.forEach(a => alerts.push({ type: 'negative_tier1', text: `Negative coverage in ${a.outlet}: "${a.headline}"`, article: a }));
-
-    // Volume spike: any day with 3x average volume
+    const tier1 = ['The Wall Street Journal', 'Financial Times', 'Bloomberg', 'Reuters', 'The New York Times', 'The Washington Post', 'CNBC', 'Associated Press'];
+    filteredArticles.filter(a => a.cl_sentiment_score && a.cl_sentiment_score <= 2 && tier1.includes(a.outlet))
+      .sort((a, b) => (b.publish_date || '').localeCompare(a.publish_date || '')).slice(0, 3)
+      .forEach(a => alerts.push({ type: 'neg', text: `Negative coverage in ${a.outlet}: "${a.headline}"` }));
     if (trendDays.length > 3) {
       const avgVol = trendDays.reduce((s, d) => s + d.count, 0) / trendDays.length;
       trendDays.slice(-5).forEach(d => {
-        if (d.count >= avgVol * 3 && d.count >= 3) {
-          alerts.push({ type: 'volume_spike', text: `Volume spike on ${formatDate(d.key)}: ${d.count} articles (avg: ${avgVol.toFixed(0)})` });
-        }
+        if (d.count >= avgVol * 3 && d.count >= 3)
+          alerts.push({ type: 'vol', text: `Volume spike on ${formatDate(d.key)}: ${d.count} articles (avg: ${avgVol.toFixed(0)})` });
       });
     }
     return alerts;
   }, [filteredArticles, trendDays]);
 
-  // Key quotes from recent articles
+  // Key quotes
   const keyQuotes = useMemo(() => {
     const quotes = [];
     [...filteredArticles].sort((a, b) => (b.publish_date || '').localeCompare(a.publish_date || '')).slice(0, 20).forEach(a => {
-      const ext = a.cl_external_quotes || [];
-      const int = a.cl_internal_quotes || [];
-      [...ext, ...int].forEach(q => {
-        if (q.quote && q.quote.length > 30 && q.source) {
+      [...(a.cl_external_quotes || []), ...(a.cl_internal_quotes || [])].forEach(q => {
+        if (q.quote && q.quote.length > 30 && q.source)
           quotes.push({ ...q, headline: a.headline, outlet: a.outlet, date: a.publish_date });
-        }
       });
     });
     return quotes.slice(0, 5);
   }, [filteredArticles]);
-  const maxThemeCount = Math.max(...themeEntries.map(e => e[1]), 1);
 
-  // Outlet aggregation
+  // Coverage velocity
+  const velocity = useMemo(() => {
+    if (trendDays.length < 5) return null;
+    const recent = trendDays.slice(-7), older = trendDays.slice(-14, -7);
+    if (older.length === 0) return null;
+    const rVol = recent.reduce((s, d) => s + d.count, 0) / recent.length;
+    const oVol = older.reduce((s, d) => s + d.count, 0) / older.length;
+    const rSent = recent.filter(d => d.avgSent);
+    const oSent = older.filter(d => d.avgSent);
+    const rAvg = rSent.length > 0 ? +(rSent.reduce((s, d) => s + d.avgSent, 0) / rSent.length).toFixed(1) : null;
+    const oAvg = oSent.length > 0 ? +(oSent.reduce((s, d) => s + d.avgSent, 0) / oSent.length).toFixed(1) : null;
+    return { volChange: oVol > 0 ? Math.round(((rVol - oVol) / oVol) * 100) : 0, rVol, oVol, sentChange: rAvg && oAvg ? +(rAvg - oAvg).toFixed(1) : null, rAvg, oAvg };
+  }, [trendDays]);
+
+  // Outlet / Firm aggregation (use all articles, not filtered)
   const outletMap = {};
   articles.forEach(a => {
     const o = a.outlet || 'Unknown';
@@ -144,123 +144,140 @@ export default function AnalyticsTab({ workstream }) {
   });
   const outlets = Object.values(outletMap).sort((a, b) => b.count - a.count);
 
-  // Firm aggregation (with client-side normalization for display)
   const firmMap = {};
   articles.forEach(a => {
-    const rawFirms = a.cl_firms_mentioned || [];
-    const rawSents = a.cl_firm_sentiments || {};
-    rawFirms.forEach(f => {
+    (a.cl_firms_mentioned || []).forEach(f => {
       if (!firmMap[f]) firmMap[f] = { name: f, count: 0, overallSents: [], firmSents: [] };
       firmMap[f].count++;
       if (a.cl_sentiment_score) firmMap[f].overallSents.push(a.cl_sentiment_score);
-      if (rawSents[f]) firmMap[f].firmSents.push(rawSents[f]);
+      if ((a.cl_firm_sentiments || {})[f]) firmMap[f].firmSents.push(a.cl_firm_sentiments[f]);
     });
   });
   const firms = Object.values(firmMap).sort((a, b) => b.count - a.count);
 
-  // Outlet × Firm matrix
-  const matrixOutlets = outlets.slice(0, 15);
-  const matrixFirms = firms.slice(0, 10);
-
   return (
-    <div className="space-y-4">
-      {/* Sub-tabs */}
-      <div className="flex gap-1 border-b border-[#b8cce0]">
+    <div className="space-y-5">
+      {/* Sub-tab bar */}
+      <div className="flex gap-1 overflow-x-auto pb-px border-b" style={{ borderColor: 'var(--border)' }}>
         {SUBTABS.map(s => (
           <button key={s} onClick={() => setSub(s)}
-            className={`px-3 py-2 text-sm font-medium border-b-2 ${sub === s ? 'border-[#0057b8] text-[#0057b8]' : 'border-transparent text-[#4a6080] hover:text-[#002855]'}`}>
+            className="px-3 py-2 text-sm font-medium whitespace-nowrap border-b-2 transition-colors"
+            style={{ borderColor: sub === s ? 'var(--accent)' : 'transparent', color: sub === s ? 'var(--accent)' : 'var(--text-muted)' }}>
             {s}
           </button>
         ))}
       </div>
 
+      {/* ─── DASHBOARD ─── */}
       {sub === 'Dashboard' && (
-        <div className="space-y-4">
-          {/* Controls: date range + granularity */}
+        <div className="space-y-5">
+          {/* Controls row */}
           <div className="flex items-center gap-3 flex-wrap">
-            <div className="flex items-center gap-1.5 text-sm" style={{ color: 'var(--text-muted)' }}>
-              <input type="date" className="border rounded px-2 py-1.5 text-sm" style={{ borderColor: 'var(--border)' }} value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
-              <span>to</span>
-              <input type="date" className="border rounded px-2 py-1.5 text-sm" style={{ borderColor: 'var(--border)' }} value={dateTo} onChange={e => setDateTo(e.target.value)} />
-              {(dateFrom || dateTo) && <button onClick={() => { setDateFrom(''); setDateTo(''); }} className="text-xs hover:underline" style={{ color: 'var(--accent)' }}>Clear</button>}
-            </div>
-            <div className="flex rounded-md overflow-hidden border" style={{ borderColor: 'var(--border)' }}>
-              {[['day', 'Day'], ['week', 'Week'], ['month', 'Month']].map(([val, label]) => (
-                <button key={val} onClick={() => setTimeGranularity(val)} className="px-3 py-1.5 text-xs" style={{ background: timeGranularity === val ? 'var(--accent-subtle)' : 'var(--bg-card)', color: timeGranularity === val ? 'var(--accent)' : 'var(--text-muted)' }}>{label}</button>
+            <input type="date" className="border rounded px-2.5 py-1.5 text-sm" style={{ borderColor: 'var(--border)' }} value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>to</span>
+            <input type="date" className="border rounded px-2.5 py-1.5 text-sm" style={{ borderColor: 'var(--border)' }} value={dateTo} onChange={e => setDateTo(e.target.value)} />
+            {(dateFrom || dateTo) && <button onClick={() => { setDateFrom(''); setDateTo(''); }} className="text-xs font-medium" style={{ color: 'var(--accent)' }}>Clear</button>}
+            <div className="ml-auto flex rounded-md overflow-hidden border" style={{ borderColor: 'var(--border)' }}>
+              {['day', 'week', 'month'].map(v => (
+                <button key={v} onClick={() => setTimeGranularity(v)} className="px-3 py-1.5 text-xs capitalize transition-colors"
+                  style={{ background: timeGranularity === v ? 'var(--accent)' : 'var(--bg-card)', color: timeGranularity === v ? 'white' : 'var(--text-muted)' }}>{v}</button>
               ))}
             </div>
-            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{totalArticles} articles</span>
           </div>
 
-          {/* Alert Banner */}
+          {/* Alert banner */}
           {alertItems.length > 0 && (
-            <div className="border rounded-lg p-3 space-y-1.5" style={{ background: '#FEF2F2', borderColor: '#FECACA' }}>
-              <h3 className="text-xs font-semibold" style={{ color: '#991B1B' }}>Attention Required</h3>
-              {alertItems.map((a, i) => (
-                <p key={i} className="text-xs" style={{ color: '#991B1B' }}>
-                  {a.type === 'negative_tier1' ? '⚠ ' : '📈 '}{a.text}
-                </p>
-              ))}
+            <div className="rounded-lg p-3 space-y-1" style={{ background: '#FEF2F2', border: '1px solid #FECACA' }}>
+              <p className="text-xs font-semibold" style={{ color: '#991B1B' }}>Attention Required</p>
+              {alertItems.map((a, i) => <p key={i} className="text-xs" style={{ color: '#7F1D1D' }}>{a.text}</p>)}
             </div>
           )}
 
-          {/* KPI Row */}
-          <div className="grid grid-cols-5 gap-3">
-            <KPI label="Total Articles" value={totalArticles} />
-            <KPI label="Avg Sentiment" value={avgSentiment} extra={sentimentLabel(Math.round(avgSentiment))} />
-            <KPI label="Negative Share" value={`${negShare}%`} />
-            <KPI label="Top Reporter" value={topReporter} small />
-            <KPI label="Top Theme" value={topTheme} small />
+          {/* KPI row + velocity */}
+          <div className="grid grid-cols-6 gap-3">
+            <Card label="Articles" value={totalArticles} />
+            <Card label="Avg Sentiment" value={avgSentiment} sub={sentimentLabel(Math.round(avgSentiment))} />
+            <Card label="Negative Share" value={`${negShare}%`} />
+            <Card label="Top Reporter" value={topReporter} small />
+            {velocity && <Card label="Volume Trend" value={`${velocity.volChange > 0 ? '+' : ''}${velocity.volChange}%`} sub={`${velocity.rVol.toFixed(1)}/${timeGranularity} vs ${velocity.oVol.toFixed(1)}`} valueColor={velocity.volChange > 20 ? '#DC2626' : velocity.volChange < -20 ? '#16A34A' : undefined} />}
+            {velocity?.sentChange != null && <Card label="Sentiment Shift" value={`${velocity.sentChange > 0 ? '+' : ''}${velocity.sentChange}`} sub={`${velocity.rAvg} vs ${velocity.oAvg}`} valueColor={velocity.sentChange > 0.3 ? '#16A34A' : velocity.sentChange < -0.3 ? '#DC2626' : undefined} />}
           </div>
 
-          {/* Sentiment Distribution — clickable bars for drilldown */}
-          <div className="card p-4">
-            <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Sentiment Distribution</h3>
-            <div className="flex items-end gap-3" style={{ height: 200 }}>
-              {sentDist.map((count, i) => {
-                const barHeight = maxSentDist > 0 ? Math.max((count / maxSentDist) * 180, count > 0 ? 6 : 0) : 0;
-                return (
-                  <div key={i} className="flex-1 group relative cursor-pointer" onClick={() => setSentimentDrilldown(sentimentDrilldown === i + 1 ? null : i + 1)} style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center', height: '100%' }}>
-                    <div className="absolute bottom-full mb-2 hidden group-hover:block z-10" style={{ width: 200, left: '50%', transform: 'translateX(-50%)' }}>
-                      <div className="rounded-lg px-3 py-2 text-xs shadow-lg" style={{ background: 'var(--bg-primary)', color: 'var(--text-inverse)' }}>
-                        <p className="font-semibold">{i + 1} — {SENT_LABELS[i]}</p>
-                        <p className="mt-1">{count} article{count !== 1 ? 's' : ''} ({totalArticles > 0 ? Math.round((count / totalArticles) * 100) : 0}%)</p>
-                        <p className="mt-0.5 opacity-70">Click to view articles</p>
+          {/* Two-column: Sentiment Distribution + Coverage Trend */}
+          <div className="grid grid-cols-2 gap-4">
+            {/* Sentiment Distribution */}
+            <div className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+              <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-muted)' }}>Sentiment Distribution</h3>
+              <div className="flex items-end gap-2" style={{ height: 140 }}>
+                {sentDist.map((count, i) => {
+                  const h = maxSentDist > 0 ? Math.max((count / maxSentDist) * 120, count > 0 ? 4 : 0) : 0;
+                  const active = sentimentDrilldown === i + 1;
+                  return (
+                    <div key={i} className="flex-1 flex flex-col justify-end items-center h-full group cursor-pointer" onClick={() => setSentimentDrilldown(active ? null : i + 1)}>
+                      <div className="absolute bottom-full mb-1 hidden group-hover:block z-10 pointer-events-none" style={{ width: 160 }}>
+                        <div className="rounded px-2 py-1 text-[10px] shadow-lg text-center" style={{ background: '#1e293b', color: 'white' }}>
+                          {SENT_LABELS[i]}: {count} ({totalArticles > 0 ? Math.round((count / totalArticles) * 100) : 0}%)
+                        </div>
                       </div>
+                      <div className={`w-full rounded-sm transition-all ${active ? 'ring-2 ring-offset-1' : 'hover:opacity-80'}`}
+                        style={{ height: h, backgroundColor: sentimentDot(i + 1), ...(active ? { ringColor: 'var(--accent)' } : {}) }} />
+                      <span className="text-[10px] font-mono mt-1 font-semibold" style={{ color: sentimentDot(i + 1) }}>{i + 1}</span>
                     </div>
-                    <div className={`w-full rounded-t transition-all ${sentimentDrilldown === i + 1 ? 'ring-2 ring-offset-1 ring-[#0057b8]' : 'hover:opacity-80'}`} style={{ height: barHeight, backgroundColor: sentimentDot(i + 1) }} />
+                  );
+                })}
+              </div>
+              <div className="flex justify-between mt-1 text-[9px]" style={{ color: 'var(--text-muted)' }}>
+                <span>Negative</span><span>Neutral</span><span>Positive</span>
+              </div>
+            </div>
+
+            {/* Coverage Trend */}
+            <div className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+              <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-muted)' }}>Coverage Trend</h3>
+              {trendDays.length > 1 ? (
+                <>
+                  <div className="flex items-end gap-px" style={{ height: 140 }}>
+                    {trendDays.map((d, i) => {
+                      const h = Math.max((d.count / maxDayCount) * 120, 3);
+                      const color = d.avgSent ? sentimentDot(Math.round(d.avgSent)) : '#CBD5E1';
+                      return (
+                        <div key={i} className="flex-1 group relative cursor-pointer" onClick={() => { setDateFrom(d.key); setDateTo(d.key); }}
+                          style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center', height: '100%', minWidth: 1 }}>
+                          <div className="absolute bottom-full mb-1 hidden group-hover:block z-10" style={{ width: 160, left: '50%', transform: 'translateX(-50%)' }}>
+                            <div className="rounded px-2 py-1 text-[10px] shadow-lg" style={{ background: '#1e293b', color: 'white' }}>
+                              <p className="font-semibold">{formatDate(d.key)}</p>
+                              <p>{d.count} articles{d.avgSent ? ` · ${d.avgSent}/7` : ''}</p>
+                            </div>
+                          </div>
+                          <div className="w-full rounded-sm transition-all hover:opacity-70" style={{ height: h, backgroundColor: color }} />
+                        </div>
+                      );
+                    })}
                   </div>
-                );
-              })}
-            </div>
-            <div className="flex gap-3 mt-2">
-              {sentDist.map((count, i) => (
-                <div key={i} className="flex-1 text-center">
-                  <span className="text-xs font-bold font-mono" style={{ color: sentimentDot(i + 1) }}>{i + 1}</span>
-                  <span className="block text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>{count}</span>
-                </div>
-              ))}
-            </div>
-            <div className="flex justify-between mt-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>
-              <span>← Negative</span><span>Neutral</span><span>Positive →</span>
+                  <div className="flex justify-between mt-1 text-[9px] font-mono" style={{ color: 'var(--text-muted)' }}>
+                    <span>{formatDate(trendDays[0]?.key)}</span>
+                    <span>{formatDate(trendDays[trendDays.length - 1]?.key)}</span>
+                  </div>
+                </>
+              ) : <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Not enough data</p>}
             </div>
           </div>
 
-          {/* Sentiment Drilldown Panel */}
+          {/* Sentiment Drilldown */}
           {sentimentDrilldown && (
-            <div className="border rounded-lg p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                  <span className="inline-block w-3 h-3 rounded-full mr-2" style={{ backgroundColor: sentimentDot(sentimentDrilldown) }} />
-                  {sentimentDrilldown} — {SENT_LABELS[sentimentDrilldown - 1]} ({sentArticles[sentimentDrilldown - 1].length} articles)
+            <div className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-semibold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
+                  <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: sentimentDot(sentimentDrilldown) }} />
+                  {sentimentDrilldown} — {SENT_LABELS[sentimentDrilldown - 1]} ({sentBucketArticles[sentimentDrilldown - 1].length})
                 </h3>
-                <button onClick={() => setSentimentDrilldown(null)} className="text-xs hover:underline" style={{ color: 'var(--text-muted)' }}>Close</button>
+                <button onClick={() => setSentimentDrilldown(null)} className="text-xs" style={{ color: 'var(--text-muted)' }}>Close</button>
               </div>
-              <div className="space-y-2 max-h-64 overflow-y-auto">
-                {sentArticles[sentimentDrilldown - 1].sort((a, b) => (b.publish_date || '').localeCompare(a.publish_date || '')).map(a => (
-                  <div key={a.id} className="flex items-center gap-3 text-xs py-1 border-b" style={{ borderColor: 'var(--border)' }}>
-                    <span className={`font-bold w-6 text-center ${sentimentColor(a.cl_sentiment_score)}`}>{a.cl_sentiment_score}</span>
-                    <span className="font-medium flex-1 truncate" style={{ color: 'var(--text-primary)' }}>{a.headline}</span>
+              <div className="space-y-1 max-h-48 overflow-y-auto">
+                {sentBucketArticles[sentimentDrilldown - 1].sort((a, b) => (b.publish_date || '').localeCompare(a.publish_date || '')).map(a => (
+                  <div key={a.id} className="flex items-center gap-3 text-xs py-1.5 border-b last:border-0" style={{ borderColor: 'var(--border)' }}>
+                    <span className={`font-bold w-5 text-center ${sentimentColor(a.cl_sentiment_score)}`}>{a.cl_sentiment_score}</span>
+                    <span className="flex-1 truncate" style={{ color: 'var(--text-primary)' }}>{a.headline}</span>
                     <span style={{ color: 'var(--text-muted)' }}>{a.outlet}</span>
                     <span style={{ color: 'var(--text-muted)' }}>{formatDate(a.publish_date)}</span>
                   </div>
@@ -269,456 +286,195 @@ export default function AnalyticsTab({ workstream }) {
             </div>
           )}
 
-          {/* Coverage Trend */}
-          {trendDays.length > 1 && (
-            <div className="card p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Coverage Trend</h3>
-              </div>
-              <div className="flex items-end gap-px" style={{ height: 160 }}>
-                {trendDays.map((d, i) => {
-                  const barHeight = Math.max((d.count / maxDayCount) * 140, 4);
-                  const barColor = d.avgSent ? sentimentDot(Math.round(d.avgSent)) : '#94A3B8';
-                  return (
-                    <div key={i} className="flex-1 group relative cursor-pointer" onClick={() => { setDateFrom(d.key); setDateTo(d.key); }} style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center', height: '100%', minWidth: 2 }}>
-                      <div className="absolute bottom-full mb-2 hidden group-hover:block z-10" style={{ width: 180, left: '50%', transform: 'translateX(-50%)' }}>
-                        <div className="rounded-lg px-3 py-2 text-xs shadow-lg" style={{ background: 'var(--bg-primary)', color: 'var(--text-inverse)' }}>
-                          <p className="font-semibold">{formatDate(d.key)}</p>
-                          <p>{d.count} article{d.count !== 1 ? 's' : ''}</p>
-                          {d.avgSent && <p>Avg sentiment: {d.avgSent}/7 — {sentimentLabel(Math.round(d.avgSent))}</p>}
-                        </div>
-                      </div>
-                      <div className="w-full rounded-t transition-all hover:opacity-70" style={{ height: barHeight, backgroundColor: barColor }} />
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="flex justify-between mt-2 text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
-                <span>{formatDate(trendDays[0]?.key)}</span>
-                <span>{trendDays.length} {timeGranularity === 'day' ? 'days' : timeGranularity === 'week' ? 'weeks' : 'months'} · bars colored by avg sentiment · click bar to filter</span>
-                <span>{formatDate(trendDays[trendDays.length - 1]?.key)}</span>
-              </div>
-            </div>
-          )}
+          {/* Two-column: Firm Sentiment + Theme Sentiment */}
+          <div className="grid grid-cols-2 gap-4">
+            <TrendChart title="Firm Sentiment" items={firms.slice(0, 5)} articles={filteredArticles} trendDays={trendDays}
+              getKey={getTimeKey} getSent={(a, name) => (a.cl_firm_sentiments || {})[name] || a.cl_sentiment_score}
+              matchFn={(a, name) => (a.cl_firms_mentioned || []).includes(name)} />
+            <TrendChart title="Theme Sentiment" items={themeEntries.slice(0, 5).map(([t]) => ({ name: t }))} articles={filteredArticles} trendDays={trendDays}
+              getKey={getTimeKey} getSent={(a) => a.cl_sentiment_score}
+              matchFn={(a, name) => (a.cl_topics || []).includes(name)} />
+          </div>
 
           {/* Key Quotes */}
           {keyQuotes.length > 0 && (
-            <div className="border rounded-lg p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
-              <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Key Quotes</h3>
+            <div className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+              <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-muted)' }}>Key Quotes</h3>
               <div className="space-y-3">
                 {keyQuotes.map((q, i) => (
-                  <div key={i} className="text-xs">
-                    <p className="italic" style={{ color: 'var(--text-primary)' }}>"{q.quote}"</p>
-                    <p className="mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                      — {q.source}{q.role ? ` (${q.role})` : ''} · {q.outlet} · {formatDate(q.date)}
-                    </p>
+                  <div key={i}>
+                    <p className="text-sm italic" style={{ color: 'var(--text-primary)' }}>"{q.quote}"</p>
+                    <p className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>— {q.source}{q.role ? ` (${q.role})` : ''} · {q.outlet} · {formatDate(q.date)}</p>
                   </div>
                 ))}
               </div>
             </div>
           )}
 
-          {/* Firm Sentiment Over Time */}
-          {(() => {
-            const topFirms = firms.slice(0, 5);
-            if (topFirms.length === 0 || trendDays.length < 2) return null;
-            const firmTrends = topFirms.map(f => {
-              const points = trendDays.map(d => {
-                const dayArts = filteredArticles.filter(a => getTimeKey(a.publish_date) === d.key && (a.cl_firms_mentioned || []).includes(f.name));
-                const sents = dayArts.map(a => (a.cl_firm_sentiments || {})[f.name] || a.cl_sentiment_score).filter(Boolean);
-                return { key: d.key, avg: sents.length > 0 ? +(sents.reduce((x, y) => x + y, 0) / sents.length).toFixed(1) : null, count: dayArts.length };
-              }).filter(p => p.avg !== null);
-              return { name: f.name, points };
-            }).filter(ft => ft.points.length > 1);
-            if (firmTrends.length === 0) return null;
-            const allPoints = firmTrends.flatMap(ft => ft.points);
-            const minSent = Math.min(...allPoints.map(p => p.avg));
-            const maxSent = Math.max(...allPoints.map(p => p.avg));
-            const range = maxSent - minSent || 1;
-            const colors = ['#0057b8', '#dc2626', '#16a34a', '#d97706', '#7c3aed'];
-            return (
-              <div className="border rounded-lg p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
-                <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Firm Sentiment Over Time</h3>
-                <div className="relative" style={{ height: 160 }}>
-                  {firmTrends.map((ft, fi) => {
-                    const pathPoints = ft.points.map((p, pi) => {
-                      const x = ft.points.length > 1 ? (pi / (ft.points.length - 1)) * 100 : 50;
-                      const y = 100 - ((p.avg - minSent) / range) * 80 - 10;
-                      return `${x},${y}`;
-                    });
-                    return (
-                      <svg key={fi} className="absolute inset-0 w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
-                        <polyline points={pathPoints.join(' ')} fill="none" stroke={colors[fi % colors.length]} strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
-                      </svg>
-                    );
-                  })}
-                </div>
-                <div className="flex gap-4 mt-2">
-                  {firmTrends.map((ft, fi) => (
-                    <span key={fi} className="text-xs flex items-center gap-1">
-                      <span className="inline-block w-3 h-0.5" style={{ background: colors[fi % colors.length] }} />
-                      {ft.name}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            );
-          })()}
-
-          {/* Theme Sentiment Over Time */}
-          {(() => {
-            const topThemes2 = themeEntries.slice(0, 5).map(([t]) => t);
-            if (topThemes2.length === 0 || trendDays.length < 2) return null;
-            const themeTrends = topThemes2.map(theme => {
-              const points = trendDays.map(d => {
-                const dayArts = filteredArticles.filter(a => getTimeKey(a.publish_date) === d.key && (a.cl_topics || []).includes(theme));
-                const sents = dayArts.map(a => a.cl_sentiment_score).filter(Boolean);
-                return { key: d.key, avg: sents.length > 0 ? +(sents.reduce((x, y) => x + y, 0) / sents.length).toFixed(1) : null, count: dayArts.length };
-              }).filter(p => p.avg !== null);
-              return { name: theme, points };
-            }).filter(tt => tt.points.length > 1);
-            if (themeTrends.length === 0) return null;
-            const allPts = themeTrends.flatMap(tt => tt.points);
-            const mn = Math.min(...allPts.map(p => p.avg));
-            const mx = Math.max(...allPts.map(p => p.avg));
-            const rng = mx - mn || 1;
-            const colors = ['#0057b8', '#dc2626', '#16a34a', '#d97706', '#7c3aed'];
-            return (
-              <div className="border rounded-lg p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
-                <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Theme Sentiment Over Time</h3>
-                <div className="relative" style={{ height: 160 }}>
-                  {themeTrends.map((tt, ti) => {
-                    const pathPoints = tt.points.map((p, pi) => {
-                      const x = tt.points.length > 1 ? (pi / (tt.points.length - 1)) * 100 : 50;
-                      const y = 100 - ((p.avg - mn) / rng) * 80 - 10;
-                      return `${x},${y}`;
-                    });
-                    return (
-                      <svg key={ti} className="absolute inset-0 w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
-                        <polyline points={pathPoints.join(' ')} fill="none" stroke={colors[ti % colors.length]} strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
-                      </svg>
-                    );
-                  })}
-                </div>
-                <div className="flex gap-4 mt-2 flex-wrap">
-                  {themeTrends.map((tt, ti) => (
-                    <span key={ti} className="text-xs flex items-center gap-1">
-                      <span className="inline-block w-3 h-0.5" style={{ background: colors[ti % colors.length] }} />
-                      {tt.name}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            );
-          })()}
-
-          {/* Outlet Tone Matrix */}
-          {(() => {
-            const topOutlets = outlets.slice(0, 8);
-            const topThemes3 = themeEntries.slice(0, 6).map(([t]) => t);
-            if (topOutlets.length === 0 || topThemes3.length === 0) return null;
-            return (
-              <div className="border rounded-lg p-4 overflow-x-auto" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
-                <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Outlet × Theme Sentiment</h3>
-                <table className="text-xs w-full">
+          {/* Two-column: Outlet Tone Matrix + Emerging Narratives */}
+          <div className="grid grid-cols-2 gap-4">
+            {/* Outlet × Theme */}
+            {outlets.length > 0 && themeEntries.length > 0 && (
+              <div className="rounded-lg border p-4 overflow-x-auto" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+                <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-muted)' }}>Outlet × Theme Tone</h3>
+                <table className="text-[11px] w-full">
                   <thead>
                     <tr>
-                      <th className="px-2 py-1.5 text-left font-medium" style={{ color: 'var(--text-muted)' }}>Outlet</th>
-                      {topThemes3.map(t => <th key={t} className="px-2 py-1.5 text-center font-medium min-w-[70px]" style={{ color: 'var(--text-muted)' }}>{t}</th>)}
+                      <th className="px-1.5 py-1 text-left font-medium" style={{ color: 'var(--text-muted)' }}></th>
+                      {themeEntries.slice(0, 5).map(([t]) => <th key={t} className="px-1.5 py-1 text-center font-medium" style={{ color: 'var(--text-muted)' }}>{t.length > 12 ? t.slice(0, 11) + '…' : t}</th>)}
                     </tr>
                   </thead>
                   <tbody>
-                    {topOutlets.map(o => (
+                    {outlets.slice(0, 7).map(o => (
                       <tr key={o.name} className="border-t" style={{ borderColor: 'var(--border)' }}>
-                        <td className="px-2 py-1.5 font-medium" style={{ color: 'var(--text-primary)' }}>{o.name}</td>
-                        {topThemes3.map(t => {
-                          const cellArts = filteredArticles.filter(a => (a.outlet || '') === o.name && (a.cl_topics || []).includes(t));
-                          if (cellArts.length === 0) return <td key={t} className="px-2 py-1.5 text-center" style={{ color: 'var(--text-muted)' }}>—</td>;
-                          const avg = +(cellArts.reduce((s, a) => s + (a.cl_sentiment_score || 0), 0) / cellArts.length).toFixed(1);
-                          return (
-                            <td key={t} className="px-2 py-1.5 text-center" style={{ backgroundColor: `${sentimentDot(Math.round(avg))}20` }}>
-                              <span className={`font-bold ${sentimentColor(Math.round(avg))}`}>{avg}</span>
-                              <span className="ml-0.5" style={{ color: 'var(--text-muted)' }}>({cellArts.length})</span>
-                            </td>
-                          );
+                        <td className="px-1.5 py-1 font-medium" style={{ color: 'var(--text-primary)' }}>{o.name}</td>
+                        {themeEntries.slice(0, 5).map(([t]) => {
+                          const c = filteredArticles.filter(a => a.outlet === o.name && (a.cl_topics || []).includes(t));
+                          if (!c.length) return <td key={t} className="px-1.5 py-1 text-center" style={{ color: 'var(--text-muted)' }}>—</td>;
+                          const avg = +(c.reduce((s, a) => s + (a.cl_sentiment_score || 0), 0) / c.length).toFixed(1);
+                          return <td key={t} className="px-1.5 py-1 text-center" style={{ backgroundColor: `${sentimentDot(Math.round(avg))}18` }}>
+                            <span className={`font-bold ${sentimentColor(Math.round(avg))}`}>{avg}</span>
+                          </td>;
                         })}
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-            );
-          })()}
+            )}
 
-          {/* Emerging Narratives */}
-          {(() => {
-            // Detect themes that are new or spiking in the most recent period
-            if (trendDays.length < 3) return null;
-            const recentKeys = trendDays.slice(-Math.ceil(trendDays.length * 0.3)).map(d => d.key);
-            const olderKeys = trendDays.slice(0, -Math.ceil(trendDays.length * 0.3)).map(d => d.key);
-            const recentThemes = {};
-            const olderThemes = {};
-            filteredArticles.forEach(a => {
-              const key = getTimeKey(a.publish_date);
-              if (!key) return;
-              (a.cl_topics || []).forEach(t => {
-                if (recentKeys.includes(key)) recentThemes[t] = (recentThemes[t] || 0) + 1;
-                if (olderKeys.includes(key)) olderThemes[t] = (olderThemes[t] || 0) + 1;
+            {/* Emerging Narratives */}
+            {(() => {
+              if (trendDays.length < 3) return null;
+              const split = Math.ceil(trendDays.length * 0.3);
+              const recentKeys = new Set(trendDays.slice(-split).map(d => d.key));
+              const olderKeys = new Set(trendDays.slice(0, -split).map(d => d.key));
+              const recent = {}, older = {};
+              filteredArticles.forEach(a => {
+                const k = getTimeKey(a.publish_date);
+                if (!k) return;
+                (a.cl_topics || []).forEach(t => {
+                  if (recentKeys.has(k)) recent[t] = (recent[t] || 0) + 1;
+                  if (olderKeys.has(k)) older[t] = (older[t] || 0) + 1;
+                });
               });
-            });
-            const emerging = Object.entries(recentThemes)
-              .filter(([t, count]) => count >= 2 && (!olderThemes[t] || count / (olderThemes[t] / Math.max(olderKeys.length, 1) * recentKeys.length) > 1.5))
-              .sort((a, b) => b[1] - a[1])
-              .slice(0, 5);
-            if (emerging.length === 0) return null;
-            return (
-              <div className="border rounded-lg p-4" style={{ borderColor: '#FDE68A', background: '#FFFBEB' }}>
-                <h3 className="text-sm font-semibold mb-2" style={{ color: '#92400E' }}>Emerging Narratives</h3>
-                <div className="space-y-1">
-                  {emerging.map(([theme, count]) => {
-                    const isNew = !olderThemes[theme];
-                    return (
+              const emerging = Object.entries(recent).filter(([t, c]) => c >= 2 && (!older[t] || c / (older[t] / Math.max(olderKeys.size, 1) * recentKeys.size) > 1.5)).sort((a, b) => b[1] - a[1]).slice(0, 5);
+              if (!emerging.length) return null;
+              return (
+                <div className="rounded-lg border p-4" style={{ borderColor: '#FDE68A', background: '#FFFBEB' }}>
+                  <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: '#92400E' }}>Emerging Narratives</h3>
+                  <div className="space-y-2">
+                    {emerging.map(([theme, count]) => (
                       <div key={theme} className="flex items-center gap-2 text-xs">
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold" style={{ background: isNew ? '#DC2626' : '#D97706', color: 'white' }}>{isNew ? 'NEW' : 'TRENDING'}</span>
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold text-white" style={{ background: !older[theme] ? '#DC2626' : '#D97706' }}>{!older[theme] ? 'NEW' : 'TRENDING'}</span>
                         <span style={{ color: '#78350F' }}>{theme}</span>
-                        <span style={{ color: '#92400E' }}>({count} recent articles)</span>
+                        <span className="ml-auto" style={{ color: '#92400E' }}>{count}</span>
                       </div>
-                    );
-                  })}
+                    ))}
+                  </div>
                 </div>
-              </div>
-            );
-          })()}
+              );
+            })()}
+          </div>
 
-          {/* Theme Breakdown */}
-          <div className="bg-white border border-[#b8cce0] rounded-lg p-4">
-            <h3 className="text-sm font-semibold text-[#002855] mb-3">Theme Breakdown</h3>
-            <div className="space-y-2">
-              {themeEntries.slice(0, 15).map(([theme, count]) => {
-                const maxThemeCount = Math.max(...themeEntries.map(e => e[1]), 1);
-                return (
-                  <div key={theme} className="flex items-center gap-3">
-                    <span className="text-xs text-[#4a6080] w-48 truncate">{theme}</span>
-                    <div className="flex-1 bg-[#f0f5fb] rounded-full h-4">
-                      <div className="bg-[#0057b8] rounded-full h-4" style={{ width: `${(count / maxThemeCount) * 100}%` }} />
+          {/* Theme breakdown + Recent articles side by side */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+              <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-muted)' }}>Theme Breakdown</h3>
+              <div className="space-y-1.5">
+                {themeEntries.slice(0, 12).map(([theme, count]) => (
+                  <div key={theme} className="flex items-center gap-2">
+                    <span className="text-[11px] w-40 truncate" style={{ color: 'var(--text-muted)' }}>{theme}</span>
+                    <div className="flex-1 rounded-full h-3" style={{ background: 'var(--bg-content)' }}>
+                      <div className="rounded-full h-3" style={{ width: `${(count / maxThemeCount) * 100}%`, background: 'var(--accent)' }} />
                     </div>
-                    <span className="text-xs text-[#4a6080] w-8 text-right">{count}</span>
+                    <span className="text-[11px] w-6 text-right font-mono" style={{ color: 'var(--text-muted)' }}>{count}</span>
                   </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Coverage Velocity */}
-          {(() => {
-            if (trendDays.length < 5) return null;
-            const recent = trendDays.slice(-7);
-            const older = trendDays.slice(-14, -7);
-            if (older.length === 0) return null;
-            const recentAvgVol = recent.reduce((s, d) => s + d.count, 0) / recent.length;
-            const olderAvgVol = older.reduce((s, d) => s + d.count, 0) / older.length;
-            const recentAvgSent = recent.filter(d => d.avgSent).length > 0 ? +(recent.filter(d => d.avgSent).reduce((s, d) => s + d.avgSent, 0) / recent.filter(d => d.avgSent).length).toFixed(1) : null;
-            const olderAvgSent = older.filter(d => d.avgSent).length > 0 ? +(older.filter(d => d.avgSent).reduce((s, d) => s + d.avgSent, 0) / older.filter(d => d.avgSent).length).toFixed(1) : null;
-            const volChange = olderAvgVol > 0 ? Math.round(((recentAvgVol - olderAvgVol) / olderAvgVol) * 100) : 0;
-            const sentChange = recentAvgSent && olderAvgSent ? +(recentAvgSent - olderAvgSent).toFixed(1) : null;
-            return (
-              <div className="grid grid-cols-2 gap-3">
-                <div className="border rounded-lg p-3" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
-                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Coverage Velocity</p>
-                  <p className="text-lg font-bold" style={{ color: volChange > 0 ? '#DC2626' : volChange < 0 ? '#16A34A' : 'var(--text-primary)' }}>
-                    {volChange > 0 ? '+' : ''}{volChange}%
-                  </p>
-                  <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                    {recentAvgVol.toFixed(1)} articles/{timeGranularity} vs {olderAvgVol.toFixed(1)} prior
-                  </p>
-                </div>
-                {sentChange !== null && (
-                  <div className="border rounded-lg p-3" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
-                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Sentiment Shift</p>
-                    <p className="text-lg font-bold" style={{ color: sentChange > 0.3 ? '#16A34A' : sentChange < -0.3 ? '#DC2626' : 'var(--text-primary)' }}>
-                      {sentChange > 0 ? '+' : ''}{sentChange}
-                    </p>
-                    <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                      {recentAvgSent}/7 recent vs {olderAvgSent}/7 prior
-                    </p>
-                  </div>
-                )}
+                ))}
               </div>
-            );
-          })()}
+            </div>
 
-          {/* Recent Articles */}
-          <div className="bg-white border border-[#b8cce0] rounded-lg p-4">
-            <h3 className="text-sm font-semibold text-[#002855] mb-3">Recent Articles</h3>
-            <div className="space-y-2">
-              {[...filteredArticles].sort((a, b) => (b.publish_date || '').localeCompare(a.publish_date || '')).slice(0, 10).map(a => (
-                <div key={a.id} className="flex items-center gap-3 text-xs">
-                  {a.cl_sentiment_score && <span className={`font-bold w-6 text-center ${sentimentColor(a.cl_sentiment_score)}`}>{a.cl_sentiment_score}</span>}
-                  <span className="text-[#002855] font-medium flex-1 truncate">{a.headline}</span>
-                  <span className="text-[#4a6080]">{a.outlet}</span>
-                  <span className="text-[#4a6080]">{formatDate(a.publish_date)}</span>
-                </div>
-              ))}
+            <div className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+              <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-muted)' }}>Recent Articles</h3>
+              <div className="space-y-1.5">
+                {[...filteredArticles].sort((a, b) => (b.publish_date || '').localeCompare(a.publish_date || '')).slice(0, 10).map(a => (
+                  <div key={a.id} className="flex items-center gap-2 text-[11px]">
+                    {a.cl_sentiment_score && <span className={`font-bold w-4 text-center ${sentimentColor(a.cl_sentiment_score)}`}>{a.cl_sentiment_score}</span>}
+                    <span className="flex-1 truncate" style={{ color: 'var(--text-primary)' }}>{a.headline}</span>
+                    <span style={{ color: 'var(--text-muted)' }}>{formatDate(a.publish_date)}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </div>
       )}
 
-      {sub === 'Reporters' && (
-        <div className="space-y-3">
-          <div className="flex gap-2 items-center">
-            <span className="text-sm text-[#4a6080]">Sort:</span>
-            {[['count', 'Article Count'], ['sentiment_asc', 'Sentiment ↑'], ['sentiment_desc', 'Sentiment ↓'], ['name', 'Name']].map(([val, label]) => (
-              <button key={val} onClick={() => { setReporterSort(val); api.getReporters(workstream.id, val).then(setReporters); }}
-                className={`text-xs px-2 py-1 rounded ${reporterSort === val ? 'bg-[#0057b8] text-white' : 'bg-[#f0f5fb] text-[#4a6080]'}`}>{label}</button>
-            ))}
-          </div>
-          {reporters.map(r => (
-            <ReporterCard key={r.name} reporter={r} workstreamId={workstream.id} onUpdate={load} />
-          ))}
-        </div>
-      )}
+      {/* ─── OUTLETS ─── */}
+      {sub === 'Outlets' && <SortableTable
+        data={outlets.map(o => ({ ...o, avg: o.sentiments.length > 0 ? +(o.sentiments.reduce((a, b) => a + b, 0) / o.sentiments.length).toFixed(1) : null, reporterCount: o.reporters.size, topThemes: Object.entries(o.themes).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([n]) => n).join(', ') }))}
+        columns={[
+          { key: 'name', label: 'Outlet', render: v => <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{v}</span> },
+          { key: 'count', label: 'Articles', numeric: true },
+          { key: 'avg', label: 'Avg Sentiment', render: v => v ? <span className={sentimentColor(Math.round(v))}>{v} — {sentimentLabel(Math.round(v))}</span> : '—', numeric: true },
+          { key: 'reporterCount', label: 'Reporters', numeric: true },
+          { key: 'topThemes', label: 'Top Themes' },
+        ]}
+        sort={outletSort} setSort={setOutletSort} defaultSort="count"
+      />}
 
-      {sub === 'Outlets' && (() => {
-        const sortedOutlets = [...outlets].sort((a, b) => {
-          const avgA = a.sentiments.length > 0 ? a.sentiments.reduce((x, y) => x + y, 0) / a.sentiments.length : 0;
-          const avgB = b.sentiments.length > 0 ? b.sentiments.reduce((x, y) => x + y, 0) / b.sentiments.length : 0;
-          const vals = { name: [a.name.localeCompare(b.name), b.name.localeCompare(a.name)], count: [a.count - b.count, b.count - a.count], sentiment: [avgA - avgB, avgB - avgA], reporters: [a.reporters.size - b.reporters.size, b.reporters.size - a.reporters.size] };
-          const [asc, desc] = vals[outletSort.by] || vals.count;
-          return outletSort.dir === 'asc' ? asc : desc;
-        });
-        const toggleOutletSort = col => setOutletSort(prev => ({ by: col, dir: prev.by === col && prev.dir === 'desc' ? 'asc' : 'desc' }));
-        return (
-        <div className="bg-white border border-[#b8cce0] rounded-lg overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-[#f0f5fb] border-b border-[#b8cce0]">
-              <tr>
-                <SortTh label="Outlet" col="name" sort={outletSort} onSort={toggleOutletSort} />
-                <SortTh label="Articles" col="count" sort={outletSort} onSort={toggleOutletSort} />
-                <SortTh label="Avg Sentiment" col="sentiment" sort={outletSort} onSort={toggleOutletSort} />
-                <SortTh label="Reporters" col="reporters" sort={outletSort} onSort={toggleOutletSort} />
-                <th className="px-3 py-2 text-left font-medium text-[#4a6080]">Top Themes</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#b8cce0]/30">
-              {sortedOutlets.map(o => {
-                const avg = o.sentiments.length > 0 ? +(o.sentiments.reduce((a, b) => a + b, 0) / o.sentiments.length).toFixed(1) : null;
-                return (
-                  <tr key={o.name}>
-                    <td className="px-3 py-2 font-medium text-[#002855]">{o.name}</td>
-                    <td className="px-3 py-2 text-[#4a6080]">{o.count}</td>
-                    <td className="px-3 py-2"><span className={sentimentColor(Math.round(avg))}>{avg} — {sentimentLabel(Math.round(avg))}</span></td>
-                    <td className="px-3 py-2 text-[#4a6080]">{o.reporters.size}</td>
-                    <td className="px-3 py-2 text-xs text-[#4a6080]">{Object.entries(o.themes).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([n]) => n).join(', ')}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-        );
-      })()}
+      {/* ─── FIRMS ─── */}
+      {sub === 'Firms' && <SortableTable
+        data={firms.map(f => ({ ...f, oAvg: f.overallSents.length > 0 ? +(f.overallSents.reduce((a, b) => a + b, 0) / f.overallSents.length).toFixed(1) : null, fAvg: f.firmSents.length > 0 ? +(f.firmSents.reduce((a, b) => a + b, 0) / f.firmSents.length).toFixed(1) : null }))}
+        columns={[
+          { key: 'name', label: 'Firm', render: v => <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{v}</span> },
+          { key: 'count', label: 'Articles', numeric: true },
+          { key: 'oAvg', label: 'Overall Avg', render: v => v ? <span className={sentimentColor(Math.round(v))}>{v}</span> : '—', numeric: true },
+          { key: 'fAvg', label: 'Firm-Specific', render: v => v ? <span className={sentimentColor(Math.round(v))}>{v}</span> : '—', numeric: true },
+        ]}
+        sort={firmSort} setSort={setFirmSort} defaultSort="count"
+      />}
 
-      {sub === 'Firms' && (() => {
-        const firmsWithAvg = firms.map(f => ({
-          ...f,
-          oAvg: f.overallSents.length > 0 ? +(f.overallSents.reduce((a, b) => a + b, 0) / f.overallSents.length).toFixed(1) : null,
-          fAvg: f.firmSents.length > 0 ? +(f.firmSents.reduce((a, b) => a + b, 0) / f.firmSents.length).toFixed(1) : null,
-        }));
-        const sortedFirms = [...firmsWithAvg].sort((a, b) => {
-          const vals = { name: [a.name.localeCompare(b.name), b.name.localeCompare(a.name)], count: [a.count - b.count, b.count - a.count], overall: [(a.oAvg || 0) - (b.oAvg || 0), (b.oAvg || 0) - (a.oAvg || 0)], firm: [(a.fAvg || 0) - (b.fAvg || 0), (b.fAvg || 0) - (a.fAvg || 0)] };
-          const [asc, desc] = vals[firmSort.by] || vals.count;
-          return firmSort.dir === 'asc' ? asc : desc;
-        });
-        const toggleFirmSort = col => setFirmSort(prev => ({ by: col, dir: prev.by === col && prev.dir === 'desc' ? 'asc' : 'desc' }));
-        return (
-        <div className="bg-white border border-[#b8cce0] rounded-lg overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-[#f0f5fb] border-b border-[#b8cce0]">
-              <tr>
-                <SortTh label="Firm" col="name" sort={firmSort} onSort={toggleFirmSort} />
-                <SortTh label="Articles" col="count" sort={firmSort} onSort={toggleFirmSort} />
-                <SortTh label="Overall Avg" col="overall" sort={firmSort} onSort={toggleFirmSort} />
-                <SortTh label="Firm-Specific Avg" col="firm" sort={firmSort} onSort={toggleFirmSort} />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#b8cce0]/30">
-              {sortedFirms.map(f => (
-                <tr key={f.name}>
-                  <td className="px-3 py-2 font-medium text-[#002855]">{f.name}</td>
-                  <td className="px-3 py-2 text-[#4a6080]">{f.count}</td>
-                  <td className="px-3 py-2"><span className={sentimentColor(Math.round(f.oAvg))}>{f.oAvg}</span></td>
-                  <td className="px-3 py-2"><span className={sentimentColor(Math.round(f.fAvg))}>{f.fAvg || '—'}</span></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        );
-      })()}
-
-      {sub === 'Themes' && (() => {
-        const themesWithAvg = themeEntries.map(([theme, count]) => {
+      {/* ─── THEMES ─── */}
+      {sub === 'Themes' && <SortableTable
+        data={themeEntries.map(([theme, count]) => {
           const arts = articles.filter(a => (a.cl_topics || []).includes(theme));
           const avg = arts.length > 0 ? +(arts.reduce((s, a) => s + (a.cl_sentiment_score || 0), 0) / arts.length).toFixed(1) : null;
-          return { theme, count, avg };
-        });
-        const sortedThemes = [...themesWithAvg].sort((a, b) => {
-          const vals = { name: [a.theme.localeCompare(b.theme), b.theme.localeCompare(a.theme)], count: [a.count - b.count, b.count - a.count], sentiment: [(a.avg || 0) - (b.avg || 0), (b.avg || 0) - (a.avg || 0)] };
-          const [asc, desc] = vals[themeSort.by] || vals.count;
-          return themeSort.dir === 'asc' ? asc : desc;
-        });
-        const toggleThemeSort = col => setThemeSort(prev => ({ by: col, dir: prev.by === col && prev.dir === 'desc' ? 'asc' : 'desc' }));
-        return (
-        <div className="bg-white border border-[#b8cce0] rounded-lg overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-[#f0f5fb] border-b border-[#b8cce0]">
-              <tr>
-                <SortTh label="Theme" col="name" sort={themeSort} onSort={toggleThemeSort} />
-                <SortTh label="Articles" col="count" sort={themeSort} onSort={toggleThemeSort} />
-                <SortTh label="Avg Sentiment" col="sentiment" sort={themeSort} onSort={toggleThemeSort} />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#b8cce0]/30">
-              {sortedThemes.map(t => (
-                <tr key={t.theme}>
-                  <td className="px-3 py-2 font-medium text-[#002855]">{t.theme}</td>
-                  <td className="px-3 py-2 text-[#4a6080]">{t.count}</td>
-                  <td className="px-3 py-2"><span className={sentimentColor(Math.round(t.avg))}>{t.avg} — {sentimentLabel(Math.round(t.avg))}</span></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        );
-      })()}
+          return { name: theme, count, avg };
+        })}
+        columns={[
+          { key: 'name', label: 'Theme', render: v => <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{v}</span> },
+          { key: 'count', label: 'Articles', numeric: true },
+          { key: 'avg', label: 'Avg Sentiment', render: v => v ? <span className={sentimentColor(Math.round(v))}>{v} — {sentimentLabel(Math.round(v))}</span> : '—', numeric: true },
+        ]}
+        sort={themeSort} setSort={setThemeSort} defaultSort="count"
+      />}
 
+      {/* ─── OUTLET × FIRM ─── */}
       {sub === 'Outlet × Firm' && (
-        <div className="bg-white border border-[#b8cce0] rounded-lg overflow-x-auto">
+        <div className="rounded-lg border overflow-x-auto" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
           <table className="text-xs">
-            <thead className="bg-[#f0f5fb]">
-              <tr>
-                <th className="px-2 py-2 text-left font-medium text-[#4a6080] sticky left-0 bg-[#f0f5fb] min-w-[120px]">Outlet</th>
-                {matrixFirms.map(f => <th key={f.name} className="px-2 py-2 text-center font-medium text-[#4a6080] min-w-[80px]">{f.name}</th>)}
+            <thead>
+              <tr style={{ background: 'var(--bg-content)' }}>
+                <th className="px-2 py-2 text-left font-medium sticky left-0" style={{ color: 'var(--text-muted)', background: 'var(--bg-content)', minWidth: 120 }}>Outlet</th>
+                {firms.slice(0, 10).map(f => <th key={f.name} className="px-2 py-2 text-center font-medium" style={{ color: 'var(--text-muted)', minWidth: 80 }}>{f.name}</th>)}
               </tr>
             </thead>
-            <tbody className="divide-y divide-[#b8cce0]/30">
-              {matrixOutlets.map(o => {
-                const outletArts = articles.filter(a => (a.outlet || 'Unknown') === o.name);
+            <tbody>
+              {outlets.slice(0, 15).map(o => {
+                const oa = articles.filter(a => (a.outlet || 'Unknown') === o.name);
                 return (
-                  <tr key={o.name}>
-                    <td className="px-2 py-1.5 font-medium text-[#002855] sticky left-0 bg-white">{o.name}</td>
-                    {matrixFirms.map(f => {
-                      const cellArts = outletArts.filter(a => (a.cl_firms_mentioned || []).includes(f.name));
-                      if (cellArts.length === 0) return <td key={f.name} className="px-2 py-1.5 text-center text-slate-300">—</td>;
-                      const firmSents = cellArts.map(a => (a.cl_firm_sentiments || {})[f.name]).filter(Boolean);
-                      const avg = firmSents.length > 0 ? +(firmSents.reduce((a, b) => a + b, 0) / firmSents.length).toFixed(1) : cellArts.reduce((s, a) => s + (a.cl_sentiment_score || 0), 0) / cellArts.length;
-                      return (
-                        <td key={f.name} className="px-2 py-1.5 text-center" style={{ backgroundColor: `${sentimentDot(Math.round(avg))}20` }}>
-                          <span className={`font-bold ${sentimentColor(Math.round(avg))}`}>{avg.toFixed?.(1) || avg}</span>
-                          <span className="text-[#4a6080] ml-1">({cellArts.length})</span>
-                        </td>
-                      );
+                  <tr key={o.name} className="border-t" style={{ borderColor: 'var(--border)' }}>
+                    <td className="px-2 py-1.5 font-medium sticky left-0" style={{ color: 'var(--text-primary)', background: 'var(--bg-card)' }}>{o.name}</td>
+                    {firms.slice(0, 10).map(f => {
+                      const ca = oa.filter(a => (a.cl_firms_mentioned || []).includes(f.name));
+                      if (!ca.length) return <td key={f.name} className="px-2 py-1.5 text-center" style={{ color: 'var(--text-muted)' }}>—</td>;
+                      const fs = ca.map(a => (a.cl_firm_sentiments || {})[f.name]).filter(Boolean);
+                      const avg = fs.length > 0 ? +(fs.reduce((a, b) => a + b, 0) / fs.length).toFixed(1) : +(ca.reduce((s, a) => s + (a.cl_sentiment_score || 0), 0) / ca.length).toFixed(1);
+                      return <td key={f.name} className="px-2 py-1.5 text-center" style={{ backgroundColor: `${sentimentDot(Math.round(avg))}18` }}>
+                        <span className={`font-bold ${sentimentColor(Math.round(avg))}`}>{avg}</span>
+                        <span className="ml-0.5" style={{ color: 'var(--text-muted)' }}>({ca.length})</span>
+                      </td>;
                     })}
                   </tr>
                 );
@@ -728,27 +484,120 @@ export default function AnalyticsTab({ workstream }) {
         </div>
       )}
 
-      {sub === 'Engagement' && (
-        <EngagementView reporters={reporters} />
+      {sub === 'Reporters' && (
+        <div className="space-y-3">
+          <div className="flex gap-2 items-center">
+            <span className="text-sm" style={{ color: 'var(--text-muted)' }}>Sort:</span>
+            {[['count', 'Articles'], ['sentiment_asc', 'Sentiment ↑'], ['sentiment_desc', 'Sentiment ↓'], ['name', 'Name']].map(([val, label]) => (
+              <button key={val} onClick={() => { setReporterSort(val); api.getReporters(workstream.id, val).then(setReporters); }}
+                className="text-xs px-2.5 py-1 rounded transition-colors"
+                style={{ background: reporterSort === val ? 'var(--accent)' : 'var(--bg-content)', color: reporterSort === val ? 'white' : 'var(--text-muted)' }}>{label}</button>
+            ))}
+          </div>
+          {reporters.map(r => <ReporterCard key={r.name} reporter={r} workstreamId={workstream.id} onUpdate={load} />)}
+        </div>
       )}
 
-      {sub === 'Narratives' && (
-        <NarrativesView workstream={workstream} />
-      )}
-
-      {sub === 'Comparison' && (
-        <ComparisonView workstream={workstream} />
-      )}
+      {sub === 'Engagement' && <EngagementView reporters={reporters} />}
+      {sub === 'Narratives' && <NarrativesView workstream={workstream} />}
+      {sub === 'Comparison' && <ComparisonView workstream={workstream} />}
     </div>
   );
 }
 
-function KPI({ label, value, extra, small }) {
+// ─── Shared components ───
+
+function Card({ label, value, sub, small, valueColor }) {
   return (
-    <div className="bg-white border border-[#b8cce0] rounded-lg p-3">
-      <p className="text-xs text-[#4a6080] mb-1">{label}</p>
-      <p className={`font-bold text-[#002855] ${small ? 'text-sm truncate' : 'text-xl'}`}>{value}</p>
-      {extra && <p className="text-xs text-[#4a6080]">{extra}</p>}
+    <div className="rounded-lg border p-3" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+      <p className="text-[10px] font-semibold uppercase tracking-wide mb-1" style={{ color: 'var(--text-muted)' }}>{label}</p>
+      <p className={`font-bold ${small ? 'text-sm truncate' : 'text-lg'}`} style={{ color: valueColor || 'var(--text-primary)' }}>{value}</p>
+      {sub && <p className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{sub}</p>}
+    </div>
+  );
+}
+
+function TrendChart({ title, items, articles, trendDays, getKey, getSent, matchFn }) {
+  const trends = items.map(item => {
+    const name = item.name;
+    const points = trendDays.map(d => {
+      const dayArts = articles.filter(a => getKey(a.publish_date) === d.key && matchFn(a, name));
+      const sents = dayArts.map(a => getSent(a, name)).filter(Boolean);
+      return sents.length > 0 ? +(sents.reduce((x, y) => x + y, 0) / sents.length).toFixed(1) : null;
+    }).map((avg, i) => avg !== null ? { x: i, avg } : null).filter(Boolean);
+    return { name, points };
+  }).filter(t => t.points.length > 1);
+
+  if (!trends.length || trendDays.length < 2) {
+    return (
+      <div className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+        <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-muted)' }}>{title}</h3>
+        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Not enough data</p>
+      </div>
+    );
+  }
+
+  const allAvgs = trends.flatMap(t => t.points.map(p => p.avg));
+  const min = Math.min(...allAvgs), max = Math.max(...allAvgs), range = max - min || 1;
+  const totalX = trendDays.length - 1;
+
+  return (
+    <div className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+      <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-muted)' }}>{title}</h3>
+      <div className="relative" style={{ height: 120 }}>
+        <svg className="absolute inset-0 w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+          {trends.map((t, ti) => (
+            <polyline key={ti} fill="none" stroke={CHART_COLORS[ti % CHART_COLORS.length]} strokeWidth="1.5" vectorEffect="non-scaling-stroke"
+              points={t.points.map(p => `${totalX > 0 ? (p.x / totalX) * 100 : 50},${100 - ((p.avg - min) / range) * 80 - 10}`).join(' ')} />
+          ))}
+        </svg>
+      </div>
+      <div className="flex gap-3 mt-2 flex-wrap">
+        {trends.map((t, ti) => (
+          <span key={ti} className="text-[10px] flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
+            <span className="inline-block w-3 h-0.5 rounded" style={{ background: CHART_COLORS[ti % CHART_COLORS.length] }} />{t.name}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SortableTable({ data, columns, sort, setSort, defaultSort }) {
+  const sorted = [...data].sort((a, b) => {
+    const col = columns.find(c => c.key === sort.by) || columns.find(c => c.key === defaultSort);
+    if (!col) return 0;
+    const av = a[col.key], bv = b[col.key];
+    if (col.numeric) return sort.dir === 'desc' ? (bv || 0) - (av || 0) : (av || 0) - (bv || 0);
+    return sort.dir === 'desc' ? String(bv || '').localeCompare(String(av || '')) : String(av || '').localeCompare(String(bv || ''));
+  });
+
+  const toggle = key => setSort(prev => ({ by: key, dir: prev.by === key && prev.dir === 'desc' ? 'asc' : 'desc' }));
+
+  return (
+    <div className="rounded-lg border overflow-hidden" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+      <table className="w-full text-sm">
+        <thead>
+          <tr style={{ background: 'var(--bg-content)' }}>
+            {columns.map(c => (
+              <th key={c.key} className="px-3 py-2.5 text-left font-medium cursor-pointer select-none transition-colors hover:text-[#002855]" style={{ color: 'var(--text-muted)' }} onClick={() => toggle(c.key)}>
+                {c.label} {sort.by === c.key && (sort.dir === 'asc' ? '↑' : '↓')}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((row, i) => (
+            <tr key={row.name || i} className="border-t" style={{ borderColor: 'var(--border)' }}>
+              {columns.map(c => (
+                <td key={c.key} className="px-3 py-2" style={{ color: 'var(--text-muted)' }}>
+                  {c.render ? c.render(row[c.key], row) : (row[c.key] ?? '—')}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -758,65 +607,48 @@ function ReporterCard({ reporter: r, workstreamId, onUpdate }) {
   const [notes, setNotes] = useState(r.notes);
   const [editing, setEditing] = useState(false);
 
-  async function saveStatus(newStatus) {
-    setStatus(newStatus);
-    await api.updateReporterStatus({ reporter_name: r.name, workstream_id: workstreamId, status: newStatus, notes });
-  }
-
-  async function saveNotes() {
-    await api.updateReporterStatus({ reporter_name: r.name, workstream_id: workstreamId, status, notes });
-    setEditing(false);
-  }
+  async function saveStatus(v) { setStatus(v); await api.updateReporterStatus({ reporter_name: r.name, workstream_id: workstreamId, status: v, notes }); }
+  async function saveNotes() { await api.updateReporterStatus({ reporter_name: r.name, workstream_id: workstreamId, status, notes }); setEditing(false); }
 
   return (
-    <div className="bg-white border border-[#b8cce0] rounded-lg p-4">
+    <div className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
       <div className="flex items-start justify-between">
         <div>
-          <h3 className="font-semibold text-[#002855]">{r.name}</h3>
-          <p className="text-xs text-[#4a6080]">{r.outlets.join(', ')}</p>
+          <h3 className="font-semibold" style={{ color: 'var(--text-primary)' }}>{r.name}</h3>
+          <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{r.outlets.join(', ')}</p>
         </div>
         <div className="flex items-center gap-2">
-          <span className={`text-xs font-bold ${sentimentColor(Math.round(r.avg_sentiment))}`}>
-            {r.avg_sentiment} avg
-          </span>
-          <span className="text-xs text-[#4a6080]">{r.article_count} articles</span>
+          <span className={`text-xs font-bold ${sentimentColor(Math.round(r.avg_sentiment))}`}>{r.avg_sentiment} avg</span>
+          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{r.article_count} articles</span>
           <span className={`text-xs px-2 py-0.5 rounded-full ${r.trend === 'Improving' ? 'bg-emerald-100 text-emerald-700' : r.trend === 'Declining' ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-600'}`}>{r.trend}</span>
-          <select value={status} onChange={e => saveStatus(e.target.value)}
-            className={`text-xs px-2 py-1 rounded-full border-0 ${reporterStatusColor(status)}`}>
+          <select value={status} onChange={e => saveStatus(e.target.value)} className={`text-xs px-2 py-1 rounded-full border-0 ${reporterStatusColor(status)}`}>
             {REPORTER_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
           </select>
         </div>
       </div>
-
       <div className="mt-3 grid grid-cols-3 gap-4 text-xs">
         <div>
-          <p className="font-medium text-[#002855] mb-1">Top Firms</p>
-          {r.top_firms.map(f => <span key={f.name} className="inline-block bg-[#f0f5fb] text-[#4a6080] px-1.5 py-0.5 rounded mr-1 mb-1">{f.name} ({f.count})</span>)}
+          <p className="font-medium mb-1" style={{ color: 'var(--text-primary)' }}>Top Firms</p>
+          {r.top_firms.map(f => <span key={f.name} className="inline-block px-1.5 py-0.5 rounded mr-1 mb-1" style={{ background: 'var(--bg-content)', color: 'var(--text-muted)' }}>{f.name} ({f.count})</span>)}
         </div>
         <div>
-          <p className="font-medium text-[#002855] mb-1">Top Themes</p>
-          {r.top_themes.map(t => <span key={t.name} className="inline-block bg-[#f0f5fb] text-[#4a6080] px-1.5 py-0.5 rounded mr-1 mb-1">{t.name}</span>)}
+          <p className="font-medium mb-1" style={{ color: 'var(--text-primary)' }}>Top Themes</p>
+          {r.top_themes.map(t => <span key={t.name} className="inline-block px-1.5 py-0.5 rounded mr-1 mb-1" style={{ background: 'var(--bg-content)', color: 'var(--text-muted)' }}>{t.name}</span>)}
         </div>
         <div>
-          <p className="font-medium text-[#002855] mb-1">Representative Pieces</p>
-          {r.representative_pieces.map((a, i) => (
-            <p key={i} className="text-[#4a6080] truncate">{a.headline}</p>
-          ))}
+          <p className="font-medium mb-1" style={{ color: 'var(--text-primary)' }}>Recent Pieces</p>
+          {r.representative_pieces.map((a, i) => <p key={i} className="truncate" style={{ color: 'var(--text-muted)' }}>{a.headline}</p>)}
         </div>
       </div>
-
-      {/* Notes */}
       <div className="mt-2">
         {editing ? (
           <div className="flex gap-2">
-            <input className="flex-1 border border-[#b8cce0] rounded px-2 py-1 text-xs" value={notes} onChange={e => setNotes(e.target.value)} placeholder="Notes..." />
-            <button onClick={saveNotes} className="text-xs text-[#0057b8] hover:underline">Save</button>
-            <button onClick={() => setEditing(false)} className="text-xs text-[#4a6080] hover:underline">Cancel</button>
+            <input className="flex-1 border rounded px-2 py-1 text-xs" style={{ borderColor: 'var(--border)' }} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Notes..." />
+            <button onClick={saveNotes} className="text-xs" style={{ color: 'var(--accent)' }}>Save</button>
+            <button onClick={() => setEditing(false)} className="text-xs" style={{ color: 'var(--text-muted)' }}>Cancel</button>
           </div>
         ) : (
-          <p className="text-xs text-[#4a6080] cursor-pointer hover:text-[#002855]" onClick={() => setEditing(true)}>
-            {notes || 'Click to add notes...'}
-          </p>
+          <p className="text-xs cursor-pointer" style={{ color: 'var(--text-muted)' }} onClick={() => setEditing(true)}>{notes || 'Click to add notes...'}</p>
         )}
       </div>
     </div>
@@ -825,80 +657,39 @@ function ReporterCard({ reporter: r, workstreamId, onUpdate }) {
 
 function EngagementView({ reporters }) {
   const [minArticles, setMinArticles] = useState(2);
-
   const filtered = reporters.filter(r => r.article_count >= minArticles);
-  const scored = filtered.map(r => {
-    const score = (7 - (r.avg_sentiment || 4)) * 3 + r.article_count * 0.5 + (r.trend === 'Declining' ? 2 : r.trend === 'Improving' ? -1 : 0);
-    return { ...r, _score: score };
-  }).sort((a, b) => b._score - a._score);
-
+  const scored = filtered.map(r => ({
+    ...r, _score: (7 - (r.avg_sentiment || 4)) * 3 + r.article_count * 0.5 + (r.trend === 'Declining' ? 2 : r.trend === 'Improving' ? -1 : 0),
+  })).sort((a, b) => b._score - a._score);
   const tierSize = Math.max(Math.ceil(scored.length / 3), 1);
   const tiers = [
-    { label: 'High Priority', reporters: scored.slice(0, tierSize), color: 'border-red-300 bg-red-50' },
-    { label: 'Medium Priority', reporters: scored.slice(tierSize, tierSize * 2), color: 'border-amber-300 bg-amber-50' },
-    { label: 'Low Priority', reporters: scored.slice(tierSize * 2), color: 'border-emerald-300 bg-emerald-50' },
+    { label: 'High Priority', items: scored.slice(0, tierSize), cls: 'border-red-200 bg-red-50/50' },
+    { label: 'Medium Priority', items: scored.slice(tierSize, tierSize * 2), cls: 'border-amber-200 bg-amber-50/50' },
+    { label: 'Low Priority', items: scored.slice(tierSize * 2), cls: 'border-emerald-200 bg-emerald-50/50' },
   ];
 
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
-        <label className="text-sm" style={{ color: 'var(--text-muted)' }}>Min articles:</label>
-        <input type="number" min="1" max="50" value={minArticles} onChange={e => setMinArticles(Math.max(1, parseInt(e.target.value) || 1))}
-          className="border rounded px-2 py-1 text-sm w-16" style={{ borderColor: 'var(--border)' }} />
-        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{scored.length} reporters shown (of {reporters.length})</span>
+        <label className="text-xs" style={{ color: 'var(--text-muted)' }}>Min articles:</label>
+        <input type="number" min="1" max="50" value={minArticles} onChange={e => setMinArticles(Math.max(1, parseInt(e.target.value) || 1))} className="border rounded px-2 py-1 text-sm w-14" style={{ borderColor: 'var(--border)' }} />
+        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{scored.length} of {reporters.length} reporters</span>
       </div>
-
-      {/* Reporter Leaderboard */}
-      <div className="border rounded-lg overflow-hidden" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
-        <table className="w-full text-sm">
-          <thead style={{ background: 'var(--bg-content)' }}>
-            <tr>
-              <th className="px-3 py-2 text-left font-medium text-[#4a6080]">Reporter</th>
-              <th className="px-3 py-2 text-left font-medium text-[#4a6080]">Outlets</th>
-              <th className="px-3 py-2 text-left font-medium text-[#4a6080]">Articles</th>
-              <th className="px-3 py-2 text-left font-medium text-[#4a6080]">Avg Sentiment</th>
-              <th className="px-3 py-2 text-left font-medium text-[#4a6080]">Trend</th>
-              <th className="px-3 py-2 text-left font-medium text-[#4a6080]">Top Themes</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y" style={{ borderColor: 'var(--border)' }}>
-            {scored.slice(0, 30).map(r => (
-              <tr key={r.name}>
-                <td className="px-3 py-2 font-medium" style={{ color: 'var(--text-primary)' }}>{r.name}</td>
-                <td className="px-3 py-2 text-xs" style={{ color: 'var(--text-muted)' }}>{r.outlets.join(', ')}</td>
-                <td className="px-3 py-2" style={{ color: 'var(--text-muted)' }}>{r.article_count}</td>
-                <td className="px-3 py-2"><span className={`font-bold ${sentimentColor(Math.round(r.avg_sentiment))}`}>{r.avg_sentiment}</span></td>
-                <td className="px-3 py-2">
-                  <span className={`text-xs px-1.5 py-0.5 rounded ${r.trend === 'Declining' ? 'bg-red-100 text-red-700' : r.trend === 'Improving' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>{r.trend}</span>
-                </td>
-                <td className="px-3 py-2 text-xs" style={{ color: 'var(--text-muted)' }}>{r.top_themes.slice(0, 3).map(t => t.name).join(', ')}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Priority Tiers */}
-      {tiers.map(tier => tier.reporters.length > 0 && (
+      {tiers.map(tier => tier.items.length > 0 && (
         <div key={tier.label}>
-          <h3 className="text-sm font-semibold text-[#002855] mb-2">{tier.label}</h3>
-          <div className="space-y-2">
-            {tier.reporters.map(r => (
-              <div key={r.name} className={`border rounded-lg p-3 ${tier.color}`}>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <span className="font-medium text-[#002855]">{r.name}</span>
-                    <span className="text-xs text-[#4a6080] ml-2">{r.outlets.join(', ')}</span>
-                  </div>
-                  <div className="flex items-center gap-3 text-xs">
-                    <span className={`font-bold ${sentimentColor(Math.round(r.avg_sentiment))}`}>{r.avg_sentiment} avg</span>
-                    <span className="text-[#4a6080]">{r.article_count} articles</span>
-                    <span className={r.trend === 'Declining' ? 'text-red-600' : r.trend === 'Improving' ? 'text-emerald-600' : 'text-[#4a6080]'}>{r.trend}</span>
-                  </div>
+          <h3 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--text-muted)' }}>{tier.label}</h3>
+          <div className="space-y-1.5">
+            {tier.items.map(r => (
+              <div key={r.name} className={`border rounded-lg px-3 py-2 flex items-center justify-between ${tier.cls}`}>
+                <div className="flex items-center gap-3">
+                  <span className="font-medium text-sm" style={{ color: 'var(--text-primary)' }}>{r.name}</span>
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{r.outlets.join(', ')}</span>
                 </div>
-                <p className="text-xs text-[#4a6080] mt-1">
-                  Themes: {r.top_themes.map(t => t.name).join(', ') || '—'} · Firms: {r.top_firms.map(f => f.name).join(', ') || '—'}
-                </p>
+                <div className="flex items-center gap-3 text-xs">
+                  <span className={`font-bold ${sentimentColor(Math.round(r.avg_sentiment))}`}>{r.avg_sentiment}</span>
+                  <span style={{ color: 'var(--text-muted)' }}>{r.article_count} art.</span>
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] ${r.trend === 'Declining' ? 'bg-red-100 text-red-700' : r.trend === 'Improving' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>{r.trend}</span>
+                </div>
               </div>
             ))}
           </div>
@@ -916,59 +707,54 @@ function NarrativesView({ workstream }) {
 
   async function generate(force = false) {
     setLoading(true);
-    try {
-      const res = await api.generateNarrative(workstream.id, { from, to, comparison_window: 'week', force });
-      setNarrative(res);
-    } catch (e) { alert(e.message); }
+    try { setNarrative(await api.generateNarrative(workstream.id, { from, to, comparison_window: 'week', force })); }
+    catch (e) { alert(e.message); }
     finally { setLoading(false); }
   }
 
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
-        <input type="date" className="border border-[#b8cce0] rounded px-2 py-1.5 text-sm" value={from} onChange={e => setFrom(e.target.value)} />
-        <span className="text-[#4a6080]">to</span>
-        <input type="date" className="border border-[#b8cce0] rounded px-2 py-1.5 text-sm" value={to} onChange={e => setTo(e.target.value)} />
-        <button onClick={() => generate(false)} disabled={loading} className="bg-[#0057b8] text-white px-4 py-2 rounded text-sm hover:bg-[#002855] disabled:opacity-50">{loading ? 'Generating...' : 'Generate Narrative Analysis'}</button>
-        {narrative && <button onClick={() => generate(true)} disabled={loading} className="text-sm text-[#4a6080] hover:underline">Regenerate</button>}
+        <input type="date" className="border rounded px-2.5 py-1.5 text-sm" style={{ borderColor: 'var(--border)' }} value={from} onChange={e => setFrom(e.target.value)} />
+        <span style={{ color: 'var(--text-muted)' }}>to</span>
+        <input type="date" className="border rounded px-2.5 py-1.5 text-sm" style={{ borderColor: 'var(--border)' }} value={to} onChange={e => setTo(e.target.value)} />
+        <button onClick={() => generate(false)} disabled={loading} className="px-4 py-2 rounded text-sm text-white" style={{ background: 'var(--accent)', opacity: loading ? 0.5 : 1 }}>{loading ? 'Generating...' : 'Generate'}</button>
+        {narrative && <button onClick={() => generate(true)} disabled={loading} className="text-xs" style={{ color: 'var(--text-muted)' }}>Regenerate</button>}
       </div>
-
       {narrative && !narrative.error && (
-        <div className="space-y-4">
-          {narrative.cached && <p className="text-xs text-[#4a6080] italic">Cached result — click Regenerate for fresh analysis</p>}
-          <div className="bg-white border border-[#b8cce0] rounded-lg p-5">
-            <h3 className="text-sm font-semibold text-[#002855] mb-2">Dominant Narrative</h3>
-            <p className="text-sm text-[#4a6080]">{narrative.dominant_narrative}</p>
-          </div>
-          <div className="bg-white border border-[#b8cce0] rounded-lg p-5">
-            <h3 className="text-sm font-semibold text-[#002855] mb-2">Narrative Shift</h3>
-            <p className="text-sm text-[#4a6080]">{narrative.narrative_shift}</p>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="bg-white border border-[#b8cce0] rounded-lg p-4">
-              <h3 className="text-sm font-semibold text-[#002855] mb-2">Emerging Storylines</h3>
-              <ul className="list-disc list-inside space-y-1">{(narrative.emerging_storylines || []).map((s, i) => <li key={i} className="text-xs text-[#4a6080]">{s}</li>)}</ul>
+        <div className="space-y-3">
+          {narrative.cached && <p className="text-xs italic" style={{ color: 'var(--text-muted)' }}>Cached — click Regenerate for fresh analysis</p>}
+          {[['Dominant Narrative', narrative.dominant_narrative], ['Narrative Shift', narrative.narrative_shift]].map(([title, text]) => text && (
+            <div key={title} className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+              <h3 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--text-muted)' }}>{title}</h3>
+              <p className="text-sm" style={{ color: 'var(--text-primary)' }}>{text}</p>
             </div>
-            <div className="bg-white border border-[#b8cce0] rounded-lg p-4">
-              <h3 className="text-sm font-semibold text-[#002855] mb-2">Fading Storylines</h3>
-              <ul className="list-disc list-inside space-y-1">{(narrative.fading_storylines || []).map((s, i) => <li key={i} className="text-xs text-[#4a6080]">{s}</li>)}</ul>
-            </div>
+          ))}
+          <div className="grid grid-cols-2 gap-3">
+            {[['Emerging', narrative.emerging_storylines], ['Fading', narrative.fading_storylines]].map(([label, items]) => items?.length > 0 && (
+              <div key={label} className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+                <h3 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--text-muted)' }}>{label} Storylines</h3>
+                <ul className="list-disc list-inside space-y-1">{items.map((s, i) => <li key={i} className="text-xs" style={{ color: 'var(--text-muted)' }}>{s}</li>)}</ul>
+              </div>
+            ))}
           </div>
           {narrative.inflection_points?.length > 0 && (
-            <div className="bg-white border border-[#b8cce0] rounded-lg p-4">
-              <h3 className="text-sm font-semibold text-[#002855] mb-2">Inflection Points</h3>
+            <div className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+              <h3 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--text-muted)' }}>Inflection Points</h3>
               {narrative.inflection_points.map((p, i) => (
-                <div key={i} className="flex gap-3 items-start py-1 border-b border-[#b8cce0]/30 last:border-0">
-                  <span className="text-xs text-[#4a6080] whitespace-nowrap">{formatDate(p.date)}</span>
-                  <div><p className="text-xs font-medium text-[#002855]">{p.headline} <span className="font-normal text-[#4a6080]">({p.outlet})</span></p><p className="text-xs text-[#4a6080]">{p.significance}</p></div>
+                <div key={i} className="flex gap-3 py-1.5 border-b last:border-0 text-xs" style={{ borderColor: 'var(--border)' }}>
+                  <span style={{ color: 'var(--text-muted)' }}>{formatDate(p.date)}</span>
+                  <div><span className="font-medium" style={{ color: 'var(--text-primary)' }}>{p.headline}</span> <span style={{ color: 'var(--text-muted)' }}>({p.outlet})</span><p style={{ color: 'var(--text-muted)' }}>{p.significance}</p></div>
                 </div>
               ))}
             </div>
           )}
-          <div className="bg-amber-50 border border-amber-200 rounded-lg p-5">
-            <h3 className="text-sm font-semibold text-[#002855] mb-2">Outlook (Next 2-4 Weeks)</h3>
-            <p className="text-sm text-[#4a6080]">{narrative.outlook}</p>
-          </div>
+          {narrative.outlook && (
+            <div className="rounded-lg p-4" style={{ background: '#FFFBEB', border: '1px solid #FDE68A' }}>
+              <h3 className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: '#92400E' }}>Outlook (2-4 Weeks)</h3>
+              <p className="text-sm" style={{ color: '#78350F' }}>{narrative.outlook}</p>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -977,138 +763,83 @@ function NarrativesView({ workstream }) {
 
 function ComparisonView({ workstream }) {
   const [entities, setEntities] = useState([]);
-  const [selectedEntities, setSelectedEntities] = useState([]);
+  const [selected, setSelected] = useState([]);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     api.getEntities(workstream.id).then(setEntities);
-    // Pre-select stakeholder tags
     const tags = workstream.taxonomy?.stakeholder_tags || [];
-    if (tags.length > 0) setSelectedEntities(tags.slice(0, 5));
+    if (tags.length > 0) setSelected(tags.slice(0, 5));
   }, [workstream.id]);
 
   async function compare() {
-    if (selectedEntities.length === 0) return;
+    if (selected.length === 0) return;
     setLoading(true);
-    try {
-      const res = await api.getComparison(workstream.id, { entities: selectedEntities.join(',') });
-      setData(res);
-    } catch (e) { alert(e.message); }
+    try { setData(await api.getComparison(workstream.id, { entities: selected.join(',') })); }
+    catch (e) { alert(e.message); }
     finally { setLoading(false); }
-  }
-
-  function toggleEntity(name) {
-    setSelectedEntities(prev => prev.includes(name) ? prev.filter(e => e !== name) : [...prev, name]);
   }
 
   return (
     <div className="space-y-4">
-      <div className="bg-white border border-[#b8cce0] rounded-lg p-4">
-        <label className="text-sm font-medium text-[#002855] block mb-2">Select entities to compare</label>
+      <div className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+        <p className="text-xs font-semibold uppercase tracking-wide mb-2" style={{ color: 'var(--text-muted)' }}>Select entities</p>
         <div className="flex flex-wrap gap-1 mb-3 max-h-32 overflow-y-auto">
           {entities.slice(0, 50).map(e => (
-            <button key={e.name} onClick={() => toggleEntity(e.name)} className={`px-2 py-0.5 rounded text-xs ${selectedEntities.includes(e.name) ? 'bg-[#0057b8] text-white' : 'bg-[#f0f5fb] text-[#4a6080]'}`}>{e.name} ({e.count})</button>
+            <button key={e.name} onClick={() => setSelected(p => p.includes(e.name) ? p.filter(x => x !== e.name) : [...p, e.name])}
+              className="px-2 py-0.5 rounded text-xs transition-colors"
+              style={{ background: selected.includes(e.name) ? 'var(--accent)' : 'var(--bg-content)', color: selected.includes(e.name) ? 'white' : 'var(--text-muted)' }}>{e.name} ({e.count})</button>
           ))}
         </div>
-        <button onClick={compare} disabled={loading || selectedEntities.length === 0} className="bg-[#0057b8] text-white px-4 py-2 rounded text-sm hover:bg-[#002855] disabled:opacity-50">{loading ? 'Comparing...' : `Compare ${selectedEntities.length} Entities`}</button>
+        <button onClick={compare} disabled={loading || !selected.length} className="px-4 py-2 rounded text-sm text-white" style={{ background: 'var(--accent)', opacity: loading || !selected.length ? 0.5 : 1 }}>{loading ? 'Comparing...' : `Compare ${selected.length}`}</button>
       </div>
 
       {data?.entities && (
         <>
-          {/* Cards */}
-          <div className="grid grid-cols-2 gap-3">
-            {data.entities.map(e => (
-              <div key={e.name} className="bg-white border border-[#b8cce0] rounded-lg p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <h4 className="font-semibold text-[#002855]">{e.name}</h4>
-                  <span className="text-xs text-[#4a6080]">{e.total_articles} articles</span>
-                </div>
-                <div className="flex gap-4 mb-2">
-                  <div><span className="text-xs text-[#4a6080]">Overall</span><br /><span className={`text-lg font-bold ${sentimentColor(Math.round(e.avg_sentiment))}`}>{e.avg_sentiment}</span></div>
-                  {e.avg_firm_sentiment && <div><span className="text-xs text-[#4a6080]">Firm-specific</span><br /><span className={`text-lg font-bold ${sentimentColor(Math.round(e.avg_firm_sentiment))}`}>{e.avg_firm_sentiment}</span></div>}
-                  <div><span className="text-xs text-[#4a6080]">Negative</span><br /><span className="text-lg font-bold text-red-600">{e.negative_share_pct}%</span></div>
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  {e.top_themes.slice(0, 3).map(t => <span key={t.theme} className="bg-[#f0f5fb] text-[#4a6080] px-1.5 py-0.5 rounded text-xs">{t.theme}</span>)}
-                </div>
-                {e.top_reporters.length > 0 && (
-                  <div className="mt-2 text-xs text-[#4a6080]">
-                    Top reporters: {e.top_reporters.slice(0, 3).map(r => `${r.name} (${r.count})`).join(', ')}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-
-          {/* Side-by-side sentiment bars */}
+          {/* Visual bars */}
           {data.entities.length > 1 && (
-            <div className="border rounded-lg p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
-              <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Sentiment Comparison</h3>
+            <div className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+              <h3 className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: 'var(--text-muted)' }}>Sentiment Comparison</h3>
               <div className="space-y-2">
                 {data.entities.map((e, i) => {
                   const sent = e.avg_firm_sentiment || e.avg_sentiment || 4;
-                  const pct = ((sent - 1) / 6) * 100;
-                  const colors = ['#0057b8', '#dc2626', '#16a34a', '#d97706', '#7c3aed'];
                   return (
                     <div key={e.name} className="flex items-center gap-3">
                       <span className="text-xs font-medium w-28 truncate" style={{ color: 'var(--text-primary)' }}>{e.name}</span>
-                      <div className="flex-1 bg-slate-100 rounded-full h-5 relative">
-                        <div className="rounded-full h-5 flex items-center justify-end pr-2" style={{ width: `${Math.max(pct, 8)}%`, backgroundColor: colors[i % colors.length] }}>
-                          <span className="text-[10px] font-bold text-white">{sent}</span>
+                      <div className="flex-1 rounded-full h-4" style={{ background: 'var(--bg-content)' }}>
+                        <div className="rounded-full h-4 flex items-center justify-end pr-1.5" style={{ width: `${Math.max(((sent - 1) / 6) * 100, 8)}%`, backgroundColor: CHART_COLORS[i % CHART_COLORS.length] }}>
+                          <span className="text-[9px] font-bold text-white">{sent}</span>
                         </div>
                       </div>
-                      <span className="text-xs w-12 text-right" style={{ color: 'var(--text-muted)' }}>{e.total_articles} art.</span>
+                      <span className="text-[10px] w-10 text-right" style={{ color: 'var(--text-muted)' }}>{e.total_articles}</span>
                     </div>
                   );
                 })}
               </div>
-              <div className="flex justify-between mt-1 text-[10px]" style={{ color: 'var(--text-muted)' }}>
-                <span>1 (Very Negative)</span><span>4 (Neutral)</span><span>7 (Very Positive)</span>
-              </div>
             </div>
           )}
-
-          {/* Comparison table */}
-          <div className="bg-white border border-[#b8cce0] rounded-lg overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-[#f0f5fb] border-b border-[#b8cce0]">
-                <tr>
-                  <th className="px-3 py-2 text-left font-medium text-[#4a6080]">Entity</th>
-                  <th className="px-3 py-2 text-left font-medium text-[#4a6080]">Articles</th>
-                  <th className="px-3 py-2 text-left font-medium text-[#4a6080]">Avg Sentiment</th>
-                  <th className="px-3 py-2 text-left font-medium text-[#4a6080]">Firm Sentiment</th>
-                  <th className="px-3 py-2 text-left font-medium text-[#4a6080]">Negative %</th>
-                  <th className="px-3 py-2 text-left font-medium text-[#4a6080]">Top Theme</th>
-                  <th className="px-3 py-2 text-left font-medium text-[#4a6080]">Top Reporter</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#b8cce0]/30">
-                {data.entities.map(e => (
-                  <tr key={e.name}>
-                    <td className="px-3 py-2 font-medium text-[#002855]">{e.name}</td>
-                    <td className="px-3 py-2 text-[#4a6080]">{e.total_articles}</td>
-                    <td className="px-3 py-2"><span className={sentimentColor(Math.round(e.avg_sentiment))}>{e.avg_sentiment}</span></td>
-                    <td className="px-3 py-2"><span className={sentimentColor(Math.round(e.avg_firm_sentiment))}>{e.avg_firm_sentiment || '—'}</span></td>
-                    <td className="px-3 py-2 text-[#4a6080]">{e.negative_share_pct}%</td>
-                    <td className="px-3 py-2 text-xs text-[#4a6080]">{e.top_themes[0]?.theme || '—'}</td>
-                    <td className="px-3 py-2 text-xs text-[#4a6080]">{e.top_reporters[0]?.name || '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          {/* Cards */}
+          <div className="grid grid-cols-2 gap-3">
+            {data.entities.map(e => (
+              <div key={e.name} className="rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg-card)' }}>
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="font-semibold" style={{ color: 'var(--text-primary)' }}>{e.name}</h4>
+                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{e.total_articles} articles</span>
+                </div>
+                <div className="flex gap-4 mb-2">
+                  <div><span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Overall</span><br /><span className={`text-lg font-bold ${sentimentColor(Math.round(e.avg_sentiment))}`}>{e.avg_sentiment}</span></div>
+                  {e.avg_firm_sentiment && <div><span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Firm</span><br /><span className={`text-lg font-bold ${sentimentColor(Math.round(e.avg_firm_sentiment))}`}>{e.avg_firm_sentiment}</span></div>}
+                  <div><span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Neg %</span><br /><span className="text-lg font-bold text-red-600">{e.negative_share_pct}%</span></div>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {e.top_themes.slice(0, 3).map(t => <span key={t.theme} className="px-1.5 py-0.5 rounded text-[10px]" style={{ background: 'var(--bg-content)', color: 'var(--text-muted)' }}>{t.theme}</span>)}
+                </div>
+              </div>
+            ))}
           </div>
         </>
       )}
     </div>
-  );
-}
-
-function SortTh({ label, col, sort, onSort }) {
-  const active = sort.by === col;
-  return (
-    <th className="px-3 py-2 text-left font-medium text-[#4a6080] cursor-pointer select-none hover:text-[#002855]" onClick={() => onSort(col)}>
-      {label} {active && (sort.dir === 'asc' ? '↑' : '↓')}
-    </th>
   );
 }
