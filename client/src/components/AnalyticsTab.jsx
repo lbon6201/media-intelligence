@@ -107,6 +107,29 @@ export default function AnalyticsTab({ workstream }) {
   }));
   const maxDayCount = Math.max(...trendDays.map(d => d.count), 1);
 
+  // Outlet / Firm / Theme aggregation (must come before computed data that depends on them)
+  const outletMap = {};
+  filteredArticles.forEach(a => {
+    const o = a.outlet || 'Unknown';
+    if (!outletMap[o]) outletMap[o] = { name: o, reporters: new Set(), count: 0, sentiments: [], themes: {} };
+    outletMap[o].count++;
+    if (a.author) outletMap[o].reporters.add(a.author);
+    if (a.cl_sentiment_score) outletMap[o].sentiments.push(a.cl_sentiment_score);
+    (a.cl_topics || []).forEach(t => { outletMap[o].themes[t] = (outletMap[o].themes[t] || 0) + 1; });
+  });
+  const outlets = Object.values(outletMap).sort((a, b) => b.count - a.count);
+
+  const firmMap = {};
+  filteredArticles.forEach(a => {
+    (a.cl_firms_mentioned || []).forEach(f => {
+      if (!firmMap[f]) firmMap[f] = { name: f, count: 0, overallSents: [], firmSents: [] };
+      firmMap[f].count++;
+      if (a.cl_sentiment_score) firmMap[f].overallSents.push(a.cl_sentiment_score);
+      if ((a.cl_firm_sentiments || {})[f]) firmMap[f].firmSents.push(a.cl_firm_sentiments[f]);
+    });
+  });
+  const firms = Object.values(firmMap).sort((a, b) => b.count - a.count);
+
   // Alerts
   const alertItems = useMemo(() => {
     const alerts = [];
@@ -359,28 +382,7 @@ export default function AnalyticsTab({ workstream }) {
     return { total: prevTotal, avg: prevAvg, neg: prevNeg };
   }, [articles, dateFrom, dateTo]);
 
-  // Outlet / Firm aggregation (uses filtered articles)
-  const outletMap = {};
-  filteredArticles.forEach(a => {
-    const o = a.outlet || 'Unknown';
-    if (!outletMap[o]) outletMap[o] = { name: o, reporters: new Set(), count: 0, sentiments: [], themes: {} };
-    outletMap[o].count++;
-    if (a.author) outletMap[o].reporters.add(a.author);
-    if (a.cl_sentiment_score) outletMap[o].sentiments.push(a.cl_sentiment_score);
-    (a.cl_topics || []).forEach(t => { outletMap[o].themes[t] = (outletMap[o].themes[t] || 0) + 1; });
-  });
-  const outlets = Object.values(outletMap).sort((a, b) => b.count - a.count);
-
-  const firmMap = {};
-  filteredArticles.forEach(a => {
-    (a.cl_firms_mentioned || []).forEach(f => {
-      if (!firmMap[f]) firmMap[f] = { name: f, count: 0, overallSents: [], firmSents: [] };
-      firmMap[f].count++;
-      if (a.cl_sentiment_score) firmMap[f].overallSents.push(a.cl_sentiment_score);
-      if ((a.cl_firm_sentiments || {})[f]) firmMap[f].firmSents.push(a.cl_firm_sentiments[f]);
-    });
-  });
-  const firms = Object.values(firmMap).sort((a, b) => b.count - a.count);
+  // (outlet/firm aggregation moved above computed data)
 
   // Tab badge counts (use filteredArticles)
   const tabBadges = useMemo(() => ({
