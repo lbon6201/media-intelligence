@@ -9,54 +9,78 @@ function safeParseJson(str) {
   try { return JSON.parse(str); } catch { return str; }
 }
 
-// Clean web noise from article text and ensure proper paragraph breaks
+// Aggressive cleaning for article full text in clips export
 function cleanArticleText(text) {
   if (!text) return '';
-  const noisePatterns = [
-    /^(home|menu|search|sign\s*in|log\s*in|subscribe|register|newsletter)\s*$/gim,
-    /^(share|tweet|email|print|save|bookmark|comment|follow\s+us)\s*$/gim,
-    /^(facebook|twitter|linkedin|instagram|youtube|tiktok|whatsapp|reddit)\s*$/gim,
-    /^(previous|next|related|more\s+from|recommended|trending|popular|most\s+read)\s*.*$/gim,
-    /^(advertisement|sponsored|promoted|ad)\s*$/gim,
-    /^(skip\s+to|jump\s+to|go\s+to|back\s+to)\s+.*$/gim,
-    /^(accept|reject|manage|customize)\s*(all\s*)?(cookies?)?\s*$/gim,
-    /^(continue\s+reading|read\s+more|show\s+more|load\s+more|see\s+all)\s*$/gim,
-    /^(sign\s+up|subscribe|get\s+access|unlock|premium|member).*$/gim,
-    /^(close|dismiss|got\s+it|no\s+thanks|maybe\s+later|not\s+now)\s*$/gim,
-    /^(photo|image|video|audio|graphic|chart|illustration|source)\s*:.*$/gim,
-    /^(getty|reuters|ap|afp|bloomberg)\s*(images?|photos?)?\s*$/gim,
-    /^\d+\s*(min|minute|hour|sec|second)s?\s*(read|ago|left)\s*$/gim,
-    /^(updated?|modified|edited)\s*:?\s*$/gim,
-    /^(tags?|topics?|categories?|section|filed\s+under)\s*:?\s*$/gim,
-    /^copyright\s.*$/gim,
-    /©.*$/gim,
-    /all\s+rights\s+reserved.*$/gim,
-    /terms\s+(of\s+)?(use|service).*$/gim,
-    /privacy\s+policy.*$/gim,
-    /cookie\s+(policy|preferences|settings).*$/gim,
-    /^\s*\|+\s*$/gm,
-    /^\s*-{3,}\s*$/gm,
-    /^\s*={3,}\s*$/gm,
-    /^\s*_{3,}\s*$/gm,
-    /^page\s+\d+\s+of\s+\d+\s*$/gim,
-    /^factiva\s*$/gim,
-    /^dow\s*jones.*$/gim,
-    /^document\s+[a-z0-9]{10,}\s*$/gim,
-    /^(se|hd|by|cr|pd|sn|sc|la|cy|lp|td|rf|co|in|ns|re|ipc)\s*$/gim,
-  ];
 
   let cleaned = text;
-  for (const pattern of noisePatterns) {
-    cleaned = cleaned.replace(pattern, '');
-  }
 
-  // Remove very short lines (nav items)
+  // --- Line-level noise removal ---
+  const lineNoisePatterns = [
+    // Web UI chrome
+    /^(home|menu|search|sign\s*in|log\s*in|subscribe|register|newsletter)\s*$/i,
+    /^(share|tweet|email|print|save|bookmark|comment|follow\s+us)\s*$/i,
+    /^(facebook|twitter|linkedin|instagram|youtube|tiktok|whatsapp|reddit)\s*$/i,
+    /^(previous|next|related|more\s+from|recommended|trending|popular|most\s+read)\b.*$/i,
+    /^(advertisement|sponsored|promoted|ad|advert)\s*$/i,
+    /^(skip\s+to|jump\s+to|go\s+to|back\s+to)\s+.*$/i,
+    /^(accept|reject|manage|customize)\s*(all\s*)?(cookies?)?\s*$/i,
+    /^(continue\s+reading|read\s+more|show\s+more|load\s+more|see\s+all)\s*$/i,
+    /^(sign\s+up|subscribe|get\s+access|unlock|premium|member).*$/i,
+    /^(close|dismiss|got\s+it|no\s+thanks|maybe\s+later|not\s+now)\s*$/i,
+    /^(photo|image|video|audio|graphic|chart|illustration|source)\s*:.*$/i,
+    /^(getty|reuters|ap|afp|bloomberg)\s*(images?|photos?)?\s*$/i,
+    /^\d+\s*(min|minute|hour|sec|second)s?\s*(read|ago|left)\s*$/i,
+    /^(updated?|modified|edited)\s*:?\s*$/i,
+    /^(tags?|topics?|categories?|section|filed\s+under)\s*:?\s*$/i,
+    // Legal / copyright
+    /^copyright\s.*/i, /©.*/, /all\s+rights\s+reserved.*/i,
+    /terms\s+(of\s+)?(use|service).*/i, /privacy\s+policy.*/i,
+    /cookie\s+(policy|preferences|settings).*/i,
+    // Separators
+    /^\s*\|+\s*$/, /^\s*-{3,}\s*$/, /^\s*={3,}\s*$/, /^\s*_{3,}\s*$/,
+    // Factiva artifacts
+    /^page\s+\d+\s+of\s+\d+\s*$/i, /^factiva\s*$/i, /^dow\s*jones.*$/i,
+    /^document\s+[a-z0-9]{10,}\s*$/i,
+    /^(se|hd|by|cr|pd|sn|sc|la|cy|lp|td|rf|co|in|ns|re|ipc)\s*$/i,
+    // Additional web artifacts
+    /^(listen|watch|download)\s*(to|the)?\s*(podcast|video|app|episode)/i,
+    /^(click|tap|swipe)\s+(here|to|for)/i,
+    /^\s*\[.*?\]\s*$/, // bracketed text like [Image] [Video]
+    /^(most\s+popular|top\s+stories|editors?\s*picks?)\s*$/i,
+    /^(free|limited)\s+(article|access|trial)/i,
+    /^already\s+(a\s+)?(subscriber|member)/i,
+    /^this\s+(article|story|content)\s+(is|was)\s+(published|produced|provided)/i,
+    /^(reporting|reporting\s+by|editing\s+by|compiled\s+by)\s+.+$/i,
+    /^our\s+standards?\s*:/i,
+    /^\s*\d+\s*\/\s*\d+\s*$/, // "1/5" slide indicators
+    /^(up\s+next|now\s+playing|watch\s+next)\s*$/i,
+    /^\s*https?:\/\/\S+\s*$/, // bare URLs on their own line
+    /^(photo|credit|caption)\s*:?\s*.{0,30}$/i,
+    /^(file\s+photo|stock\s+image|handout)/i,
+    /^(morning|evening|daily)\s+(brief|briefing|digest|newsletter)/i,
+  ];
+
   cleaned = cleaned.split('\n').filter(line => {
     const t = line.trim();
-    if (!t) return true;
-    if (t.length <= 3) return false;
-    return true;
+    if (!t) return true; // keep blank lines for paragraph structure
+    if (t.length <= 2) return false; // single chars, bullets
+    return !lineNoisePatterns.some(p => p.test(t));
   }).join('\n');
+
+  // --- Inline artifact removal ---
+  cleaned = cleaned
+    .replace(/\[[\s\S]{0,30}?\]/g, '') // short bracketed content like [Photo], [1], [Read more]
+    .replace(/\{[\s\S]{0,30}?\}/g, '') // curly brace artifacts
+    .replace(/<[^>]+>/g, '')           // any stray HTML tags
+    .replace(/&(amp|lt|gt|quot|nbsp|#\d+);?/g, m => { // HTML entities
+      const map = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&nbsp;': ' ' };
+      return map[m] || '';
+    })
+    .replace(/\u00A0/g, ' ')           // non-breaking spaces
+    .replace(/[\u200B-\u200D\uFEFF]/g, '') // zero-width chars
+    .replace(/\t/g, ' ')               // tabs to spaces
+    .replace(/ {3,}/g, '  ');          // collapse excessive spaces
 
   // Collapse excessive blank lines
   cleaned = cleaned.replace(/\n{4,}/g, '\n\n\n');
@@ -68,13 +92,21 @@ function cleanArticleText(text) {
 async function generateClipsSummary(articles, workstream, headerConfig) {
   const articleSummaries = articles.map((a, i) => {
     const topics = safeParseJson(a.cl_topics) || [];
+    const intQuotes = safeParseJson(a.cl_internal_quotes) || [];
+    const extQuotes = safeParseJson(a.cl_external_quotes) || [];
+    const allQuotes = [...intQuotes, ...extQuotes];
+    const quoteSample = allQuotes.slice(0, 3).map(q =>
+      `"${q.quote}" — ${q.source}${q.role ? ` (${q.role})` : ''}`
+    ).join('\n      ');
+
     return [
       `${i + 1}. "${a.headline}" (${a.outlet || 'Unknown'}, ${a.publish_date || 'Unknown'})`,
       `   Author: ${a.author || 'Unknown'}`,
       `   Topics: ${topics.join(', ') || 'N/A'}`,
       `   Sentiment: ${a.cl_sentiment_score || '?'}/7 — ${a.cl_sentiment_label || ''}`,
       `   Key Takeaway: ${a.cl_key_takeaway || 'N/A'}`,
-      a.full_text ? `   First 500 chars: ${a.full_text.slice(0, 500)}` : '',
+      quoteSample ? `   Notable Quotes:\n      ${quoteSample}` : '',
+      a.full_text ? `   Excerpt: ${a.full_text.slice(0, 400)}` : '',
     ].filter(Boolean).join('\n');
   }).join('\n\n');
 
@@ -84,13 +116,16 @@ async function generateClipsSummary(articles, workstream, headerConfig) {
 
   const systemPrompt = [
     'You are a media intelligence analyst at a strategic communications firm.',
-    'You are writing an internal media coverage report for a client.',
-    'Write in a professional, concise, third-person tone.',
-    'Do NOT use markdown formatting — output plain text only.',
+    'Write an internal media coverage summary for a client.',
+    'Professional, concise, third-person tone. Plain text only — no markdown.',
+    '',
     'Return a JSON object with two fields:',
-    '  "summary": A 2-4 paragraph narrative summary of the media coverage. Mention which outlets covered the story, key themes, notable quotes or positions, and what the client should know. Reference the client by name where appropriate.',
-    '  "key_narratives": An array of 3-6 strings, each a brief (1-2 sentence) description of a critical narrative or theme emerging from the coverage.',
-    'Return ONLY valid JSON. No markdown backticks, no preamble.',
+    '',
+    '"summary": A concise 1-2 paragraph narrative summary. State which outlets covered the topic and the overall thrust of coverage. Mention the client by name where relevant. If a particular quote from the articles is especially noteworthy or revealing, include it inline (with attribution) — but only do this when a quote genuinely stands out. Do not force quotes into the summary if none are remarkable.',
+    '',
+    '"key_narratives": An array of 3-5 strings. Each is one sentence identifying a critical theme or narrative thread in the coverage.',
+    '',
+    'Return ONLY valid JSON. No backticks, no preamble.',
   ].join('\n');
 
   const userMsg = [
@@ -114,7 +149,7 @@ async function generateClipsSummary(articles, workstream, headerConfig) {
     },
     body: JSON.stringify({
       model: 'claude-sonnet-4-20250514',
-      max_tokens: 2000,
+      max_tokens: 1500,
       system: systemPrompt,
       messages: [{ role: 'user', content: userMsg }],
     }),
@@ -140,158 +175,161 @@ function formatClipsDate(dateStr) {
   }
 }
 
+function formatShortDate(dateStr) {
+  if (!dateStr) return '';
+  try {
+    const d = new Date(dateStr + 'T12:00:00');
+    return d.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' });
+  } catch {
+    return dateStr;
+  }
+}
+
+// Font/size constants matching the example doc (11pt Calibri, black text)
+const FONT = 'Calibri';
+const SZ_BODY = 22;       // 11pt
+const SZ_HEADING = 22;    // 11pt bold for section headings
+const SZ_ARTICLE_HEAD = 22; // 11pt bold for article headlines
+const SZ_SMALL = 20;      // 10pt for metadata
+const CLR = '000000';     // black
+const CLR_MUTED = '444444'; // dark gray for metadata
+
 function buildClipsDoc(articles, workstream, headerConfig, aiResult) {
   const children = [];
   const now = new Date();
-  const dateStr = headerConfig.date || now.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
+  const dateStr = headerConfig.date || now.toLocaleDateString('en-US', {
+    month: 'long', day: 'numeric', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+  });
 
   // --- Header: TO / DATE / RE ---
   const headerFields = [
-    { label: 'TO:', value: headerConfig.to || workstream.client || '' },
-    { label: 'DATE:', value: dateStr },
-    { label: 'RE:', value: headerConfig.re || `${workstream.name} – Media Coverage Report` },
+    { label: 'TO: ', value: headerConfig.to || workstream.client || '' },
+    { label: 'DATE: ', value: dateStr },
+    { label: 'RE: ', value: headerConfig.re || `${workstream.name} – Media Coverage Report` },
   ];
 
   for (const { label, value } of headerFields) {
     children.push(new Paragraph({
-      spacing: { after: 60 },
-      tabStops: [{ type: TabStopType.LEFT, position: TabStopPosition.MAX * 0.08 }],
+      spacing: { after: 40 },
       children: [
-        new TextRun({ text: label, font: 'Arial', size: 22, bold: true, color: '333333' }),
-        new TextRun({ text: '\t', font: 'Arial' }),
-        new TextRun({ text: value, font: 'Arial', size: 22, color: '333333' }),
+        new TextRun({ text: label, font: FONT, size: SZ_BODY, bold: true, color: CLR }),
+        new TextRun({ text: '\t' }),
+        new TextRun({ text: value, font: FONT, size: SZ_BODY, color: CLR }),
       ],
     }));
   }
 
-  // Horizontal rule
-  children.push(new Paragraph({ spacing: { before: 200, after: 200 }, children: [
-    new TextRun({ text: '─'.repeat(80), font: 'Arial', size: 16, color: 'CCCCCC' }),
-  ]}));
+  children.push(new Paragraph({ spacing: { before: 120, after: 120 }, children: [] }));
 
-  // --- Summary section ---
-  children.push(new Paragraph({ spacing: { before: 100, after: 200 }, children: [
-    new TextRun({ text: 'Summary', font: 'Arial', size: 26, bold: true, color: '1a1a1a' }),
+  // --- Summary ---
+  children.push(new Paragraph({ spacing: { after: 120 }, children: [
+    new TextRun({ text: 'Summary', font: FONT, size: SZ_HEADING, bold: true, color: CLR }),
   ]}));
 
   if (aiResult?.summary) {
     const summaryParagraphs = aiResult.summary.split(/\n\s*\n/).filter(p => p.trim());
     for (const para of summaryParagraphs) {
-      children.push(new Paragraph({ spacing: { before: 80, after: 80 }, children: [
-        new TextRun({ text: para.trim(), font: 'Arial', size: 21, color: '333333' }),
+      children.push(new Paragraph({ spacing: { before: 60, after: 60 }, children: [
+        new TextRun({ text: para.trim(), font: FONT, size: SZ_BODY, color: CLR }),
       ]}));
     }
   }
 
   // --- Key Narratives ---
   if (aiResult?.key_narratives?.length > 0) {
-    children.push(new Paragraph({ spacing: { before: 300, after: 100 }, children: [
-      new TextRun({ text: 'Key Narratives', font: 'Arial', size: 26, bold: true, color: '1a1a1a' }),
-    ]}));
+    children.push(new Paragraph({ spacing: { before: 120, after: 60 }, children: [] }));
 
     for (const narrative of aiResult.key_narratives) {
       children.push(new Paragraph({
-        spacing: { before: 60, after: 60 },
+        spacing: { before: 40, after: 40 },
         bullet: { level: 0 },
         children: [
-          new TextRun({ text: narrative, font: 'Arial', size: 21, color: '333333' }),
+          new TextRun({ text: narrative, font: FONT, size: SZ_BODY, color: CLR }),
         ],
       }));
     }
   }
 
-  // Horizontal rule
-  children.push(new Paragraph({ spacing: { before: 300, after: 200 }, children: [
-    new TextRun({ text: '─'.repeat(80), font: 'Arial', size: 16, color: 'CCCCCC' }),
-  ]}));
+  children.push(new Paragraph({ spacing: { before: 120, after: 120 }, children: [] }));
 
   // --- Media Coverage: Article Index ---
-  children.push(new Paragraph({ spacing: { before: 100, after: 200 }, children: [
-    new TextRun({ text: 'Media Coverage', font: 'Arial', size: 26, bold: true, color: '1a1a1a' }),
+  children.push(new Paragraph({ spacing: { after: 120 }, children: [
+    new TextRun({ text: 'Media Coverage', font: FONT, size: SZ_HEADING, bold: true, color: CLR }),
   ]}));
 
   for (const a of articles) {
-    const datePart = a.publish_date ? formatClipsDate(a.publish_date) : '';
-    const parts = [
-      new TextRun({ text: 'ARTICLE: ', font: 'Arial', size: 21, bold: true, color: '333333' }),
-      new TextRun({ text: `"${a.headline}"`, font: 'Arial', size: 21, color: '333333' }),
-      new TextRun({ text: ` (${a.outlet || 'Unknown'}${datePart ? ', ' + datePart : ''})`, font: 'Arial', size: 21, color: '666666' }),
+    const datePart = a.publish_date ? formatShortDate(a.publish_date) : '';
+    const indexChildren = [
+      new TextRun({ text: 'ARTICLE: ', font: FONT, size: SZ_BODY, color: CLR }),
     ];
 
-    children.push(new Paragraph({ spacing: { before: 40, after: 40 }, children: parts }));
-
-    // Add URL as hyperlink if available
+    // Headline as hyperlink if URL available, otherwise plain text
     if (a.url) {
-      children.push(new Paragraph({ spacing: { after: 20 }, children: [
-        new TextRun({ text: '\t' }),
-        new ExternalHyperlink({
-          link: a.url,
-          children: [new TextRun({ text: a.url, font: 'Arial', size: 18, color: '0563C1', underline: {} })],
-        }),
-      ]}));
+      indexChildren.push(new ExternalHyperlink({
+        link: a.url,
+        children: [new TextRun({ text: `"${a.headline}"`, font: FONT, size: SZ_BODY, color: '0563C1', underline: {} })],
+      }));
+    } else {
+      indexChildren.push(new TextRun({ text: `"${a.headline}"`, font: FONT, size: SZ_BODY, color: CLR }));
     }
+
+    indexChildren.push(
+      new TextRun({ text: ` (${a.outlet || 'Unknown'}${datePart ? ', ' + datePart : ''})`, font: FONT, size: SZ_BODY, color: CLR_MUTED }),
+    );
+
+    children.push(new Paragraph({ spacing: { before: 30, after: 30 }, children: indexChildren }));
   }
 
-  // Horizontal rule
-  children.push(new Paragraph({ spacing: { before: 300, after: 200 }, children: [
-    new TextRun({ text: '─'.repeat(80), font: 'Arial', size: 16, color: 'CCCCCC' }),
-  ]}));
+  children.push(new Paragraph({ spacing: { before: 120, after: 120 }, children: [] }));
 
   // --- Full Articles ---
-  children.push(new Paragraph({ spacing: { before: 100, after: 200 }, children: [
-    new TextRun({ text: 'Media Coverage: Full Articles', font: 'Arial', size: 26, bold: true, color: '1a1a1a' }),
+  children.push(new Paragraph({ spacing: { after: 120 }, children: [
+    new TextRun({ text: 'Media Coverage: Full Articles ', font: FONT, size: SZ_HEADING, bold: true, color: CLR }),
   ]}));
 
   for (const a of articles) {
-    // Article headline
-    children.push(new Paragraph({ spacing: { before: 300, after: 40 }, children: [
-      new TextRun({ text: a.headline, font: 'Arial', size: 24, bold: true, color: '1a1a1a' }),
+    // Headline (bold) + metadata on next line
+    children.push(new Paragraph({ spacing: { before: 240, after: 20 }, children: [
+      new TextRun({ text: a.headline, font: FONT, size: SZ_ARTICLE_HEAD, bold: true, color: CLR }),
     ]}));
 
-    // Outlet, Author, Date on separate lines for clean formatting
-    if (a.outlet) {
-      children.push(new Paragraph({ spacing: { after: 20 }, children: [
-        new TextRun({ text: a.outlet, font: 'Arial', size: 21, color: '666666' }),
-      ]}));
-    }
-    if (a.author) {
-      children.push(new Paragraph({ spacing: { after: 20 }, children: [
-        new TextRun({ text: `By ${a.author}`, font: 'Arial', size: 21, color: '666666' }),
-      ]}));
-    }
-    if (a.publish_date) {
-      children.push(new Paragraph({ spacing: { after: 80 }, children: [
-        new TextRun({ text: formatClipsDate(a.publish_date), font: 'Arial', size: 21, color: '666666' }),
+    // Metadata line: Outlet \n By Author \n Date
+    const metaParts = [];
+    if (a.outlet) metaParts.push(a.outlet);
+    if (a.author) metaParts.push(`By ${a.author}`);
+    if (a.publish_date) metaParts.push(formatClipsDate(a.publish_date));
+
+    if (metaParts.length > 0) {
+      children.push(new Paragraph({ spacing: { after: 40 }, children: [
+        new TextRun({ text: metaParts.join(' \n'), font: FONT, size: SZ_BODY, color: CLR_MUTED }),
       ]}));
     }
 
-    // URL
+    // URL as hyperlink
     if (a.url) {
-      children.push(new Paragraph({ spacing: { after: 80 }, children: [
+      children.push(new Paragraph({ spacing: { after: 60 }, children: [
         new ExternalHyperlink({
           link: a.url,
-          children: [new TextRun({ text: a.url, font: 'Arial', size: 18, color: '0563C1', underline: {} })],
+          children: [new TextRun({ text: a.url, font: FONT, size: SZ_SMALL, color: '0563C1', underline: {} })],
         }),
       ]}));
     }
 
-    // Full text — cleaned and split into proper paragraphs
+    // Full article text — cleaned and properly paragraphed
     const cleanedText = cleanArticleText(a.full_text || '');
     const textParagraphs = cleanedText.split(/\n\s*\n/).filter(p => p.trim());
     for (const para of textParagraphs) {
-      // Replace single newlines within a paragraph with spaces for proper flow
       const flowedText = para.trim().replace(/\n/g, ' ').replace(/\s{2,}/g, ' ');
-      children.push(new Paragraph({ spacing: { before: 80, after: 80 }, children: [
-        new TextRun({ text: flowedText, font: 'Arial', size: 21, color: '333333' }),
+      if (!flowedText) continue;
+      children.push(new Paragraph({ spacing: { before: 60, after: 60 }, children: [
+        new TextRun({ text: flowedText, font: FONT, size: SZ_BODY, color: CLR }),
       ]}));
     }
-
-    // Separator between articles
-    children.push(new Paragraph({ spacing: { before: 200, after: 100 }, children: [] }));
   }
 
   const doc = new Document({
-    styles: { default: { document: { run: { font: 'Arial', size: 21 } } } },
+    styles: { default: { document: { run: { font: FONT, size: SZ_BODY } } } },
     sections: [{
       properties: {
         page: { margin: { top: convertInchesToTwip(1), bottom: convertInchesToTwip(1), left: convertInchesToTwip(1), right: convertInchesToTwip(1) } },
@@ -302,9 +340,9 @@ function buildClipsDoc(articles, workstream, headerConfig, aiResult) {
             new Paragraph({
               alignment: AlignmentType.CENTER,
               children: [
-                new TextRun({ children: [PageNumber.CURRENT], font: 'Arial', size: 16, color: '999999' }),
-                new TextRun({ text: ' of ', font: 'Arial', size: 16, color: '999999' }),
-                new TextRun({ children: [PageNumber.TOTAL_PAGES], font: 'Arial', size: 16, color: '999999' }),
+                new TextRun({ children: [PageNumber.CURRENT], font: FONT, size: 18, color: '888888' }),
+                new TextRun({ text: ' of ', font: FONT, size: 18, color: '888888' }),
+                new TextRun({ children: [PageNumber.TOTAL_PAGES], font: FONT, size: 18, color: '888888' }),
               ],
             }),
           ],
@@ -317,7 +355,7 @@ function buildClipsDoc(articles, workstream, headerConfig, aiResult) {
   return doc;
 }
 
-// Generate clips for a date range
+// Generate clips for a date range or selected articles
 router.post('/:workstream_id/generate', async (req, res) => {
   const wsId = req.params.workstream_id;
   const { date_from, date_to, article_ids, header_to, header_re, header_date } = req.body;
@@ -327,14 +365,12 @@ router.post('/:workstream_id/generate', async (req, res) => {
 
   let articles;
   if (article_ids && Array.isArray(article_ids) && article_ids.length > 0) {
-    // Specific articles selected
     const placeholders = article_ids.map(() => '?').join(',');
     articles = await db.all(
       `SELECT * FROM articles WHERE id IN (${placeholders}) AND workstream_id = ? ORDER BY publish_date DESC`,
       ...article_ids, wsId
     );
   } else if (date_from) {
-    // Date range
     let sql = `SELECT * FROM articles WHERE workstream_id = ? AND cl_status = 'classified'`;
     const params = [wsId];
     sql += ' AND publish_date >= ?';
@@ -353,7 +389,7 @@ router.post('/:workstream_id/generate', async (req, res) => {
     return res.status(400).json({ error: 'No articles found for the given criteria' });
   }
 
-  // Parse JSON fields for articles
+  // Parse JSON fields
   for (const a of articles) {
     a.cl_topics = safeParseJson(a.cl_topics);
     a.cl_firms_mentioned = safeParseJson(a.cl_firms_mentioned);
@@ -362,6 +398,8 @@ router.post('/:workstream_id/generate', async (req, res) => {
     a.cl_geographic_tags = safeParseJson(a.cl_geographic_tags);
     a.cl_policy_dimensions = safeParseJson(a.cl_policy_dimensions);
     a.cl_stakeholder_focus = safeParseJson(a.cl_stakeholder_focus);
+    a.cl_internal_quotes = safeParseJson(a.cl_internal_quotes);
+    a.cl_external_quotes = safeParseJson(a.cl_external_quotes);
   }
 
   const headerConfig = {
@@ -370,7 +408,6 @@ router.post('/:workstream_id/generate', async (req, res) => {
     date: header_date || '',
   };
 
-  // Generate AI summary
   let aiResult;
   try {
     aiResult = await generateClipsSummary(articles, { ...ws, client: ws.client }, headerConfig);
@@ -379,7 +416,6 @@ router.post('/:workstream_id/generate', async (req, res) => {
     aiResult = { summary: `Media coverage report covering ${articles.length} articles.`, key_narratives: [] };
   }
 
-  // Build Word document
   const doc = buildClipsDoc(articles, ws, headerConfig, aiResult);
   const buf = await Packer.toBuffer(doc);
 
